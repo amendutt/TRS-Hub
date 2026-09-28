@@ -1,0 +1,6 @@
+{
+  "name": "Havn - E-Commerce & Logo Technical Refresh Solution",
+  "description": "Configurable enterprise logo refresh solution with MySQL schema, version history, status tracking, and Havn e-commerce storefront and admin catalog.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
