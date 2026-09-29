@@ -1,5 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../services/mysqlMockDb';
+import { loadAccountProfile, loadAdminState, saveAdminState } from '../../services/api';
+import { firebaseAuth, firebaseConfigured, observeFirebaseUser, signInWithGoogle, signOutFirebase } from '../../services/firebaseAuth';
 import {
   Product,
   Order,
@@ -14,7 +16,7 @@ import {
   StaticPage,
   HomepageBanner
 } from '../../types/logo';
-import { BrandLogo } from '../logo/BrandLogo';
+import logoImage from '../../assets/images/logo.png.png';
 import { LogoTechnicalRefreshStudio } from '../logo/LogoTechnicalRefreshStudio';
 import {
   LayoutDashboard,
@@ -66,7 +68,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   initialTab = 'dashboard'
 }) => {
   const [activeNav, setActiveNav] = useState<'dashboard' | 'logo_studio' | 'catalog' | 'categories' | 'orders' | 'reviews' | 'customers' | 'marketing' | 'reports' | 'audit_logs' | 'settings'>(initialTab);
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(true);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+  const [isCheckingAuthorization, setIsCheckingAuthorization] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string>('');
 
   // Synced Live State from MySQL Mock DB
   const [products, setProducts] = useState<Product[]>(db.getProducts());
@@ -99,6 +103,71 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
     });
     return unsub;
   }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const unsubscribe = observeFirebaseUser(user => {
+      void (async () => {
+        if (!user) {
+          if (isMounted) {
+            setIsLoggedIn(false);
+            setIsCheckingAuthorization(false);
+          }
+          return;
+        }
+
+        try {
+          const profile = await loadAccountProfile(user);
+          if (!profile.isAdmin) {
+            if (isMounted) setAuthError('This Google account is not authorized for the admin portal.');
+            if (isMounted) setIsLoggedIn(false);
+            return;
+          }
+
+          const snapshot = await loadAdminState(user);
+          if (snapshot) {
+            db.importSnapshot(snapshot);
+          } else {
+            await saveAdminState(user, db.exportSnapshot());
+          }
+          if (isMounted) {
+            setAuthError('');
+            setIsLoggedIn(true);
+          }
+        } catch (error) {
+          if (isMounted) {
+            setAuthError(error instanceof Error ? error.message : 'Admin authorization failed.');
+            setIsLoggedIn(false);
+          }
+        } finally {
+          if (isMounted) setIsCheckingAuthorization(false);
+        }
+      })();
+    });
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const user = firebaseAuth?.currentUser;
+    if (!isLoggedIn || !user) return;
+
+    let timer: ReturnType<typeof setTimeout>;
+    const unsubscribe = db.subscribe(() => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        void saveAdminState(user, db.exportSnapshot()).catch(error => {
+          setAuthError(error instanceof Error ? error.message : 'Unable to save admin changes.');
+        });
+      }, 500);
+    });
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [isLoggedIn]);
 
   const activeLogo = db.getActiveVersion();
   const lowStockProducts = db.getLowStockAlerts();
@@ -357,12 +426,16 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
   });
 
   // Admin Login Screen view if logged out
+  if (isCheckingAuthorization) {
+    return <div className="min-h-screen flex items-center justify-center text-sm text-[#666B62]" role="status">Checking admin access...</div>;
+  }
+
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-[#F7F5EF] flex items-center justify-center p-4">
         <div className="max-w-4xl w-full bg-white rounded-2xl shadow-xl border border-[#E4E1D6] overflow-hidden grid grid-cols-1 md:grid-cols-2">
           <div className="bg-gradient-to-br from-[#0B3D3F] to-[#0F5257] text-white p-10 flex flex-col justify-between">
-            <BrandLogo config={activeLogo.config} themeMode="dark" size="lg" />
+            <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-14 max-w-[260px] object-contain" />
             <div className="space-y-3">
               <h2 className="font-serif text-2xl font-bold">{activeLogo.config.brandName} Back-Office</h2>
               <p className="text-xs text-[#B0C6C3] leading-relaxed">
@@ -377,34 +450,19 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
           <div className="p-10 flex flex-col justify-center space-y-6">
             <div>
               <h3 className="font-serif text-2xl font-bold text-[#20241F]">Log in to Admin</h3>
-              <p className="text-xs text-[#666B62]">Enter credentials to access back-office modules.</p>
+              <p className="text-xs text-[#666B62]">Use an authorized Google account to access back-office modules.</p>
             </div>
 
             <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-[#666B62] mb-1">Email</label>
-                <input
-                  type="email"
-                  defaultValue="admin@techrefresh.com"
-                  className="w-full px-3.5 py-2 text-sm rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-[#666B62] mb-1">Password</label>
-                <input
-                  type="password"
-                  defaultValue="••••••••••••"
-                  className="w-full px-3.5 py-2 text-sm rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]"
-                />
-              </div>
-
+              {authError && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">{authError}</p>}
+              {!firebaseConfigured && <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">Set your Firebase web app values in `.env.local` (see README.md), then restart `npm run dev`.</p>}
               <button
                 type="button"
-                onClick={() => setIsLoggedIn(true)}
-                className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] text-white rounded-lg text-sm font-semibold transition-all shadow-sm cursor-pointer"
+                onClick={() => { void signInWithGoogle().catch(error => setAuthError(error instanceof Error ? error.message : 'Google sign-in failed.')); }}
+                disabled={!firebaseConfigured}
+                className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition-all shadow-sm cursor-pointer disabled:cursor-not-allowed"
               >
-                Log In
+                Continue with Google
               </button>
             </div>
           </div>
@@ -420,7 +478,7 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
         <div className="space-y-6">
           {/* Brand Wordmark in Sidebar using Refreshed Logo (Dark mode) */}
           <div className="pb-4 border-b border-[#0F5257]/60">
-            <BrandLogo config={activeLogo.config} themeMode="dark" size="md" />
+            <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-10 max-w-[180px] object-contain" />
             <div className="flex items-center gap-1.5 mt-2 text-[10px] text-[#A4BFBC]">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
               <span>Active Brand Version:</span>
@@ -498,7 +556,7 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
             <span>View Public Storefront</span>
           </button>
           <button
-            onClick={() => setIsLoggedIn(false)}
+            onClick={() => { void signOutFirebase(); setIsLoggedIn(false); }}
             className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-red-300 hover:bg-red-900/30 transition-colors cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />

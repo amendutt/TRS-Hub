@@ -1440,6 +1440,26 @@ export function generateLogoVariants(version: LogoVersion): LogoVariant[] {
   ];
 }
 
+export interface MySQLDatabaseSnapshot {
+  versions: LogoVersion[];
+  auditLogs: LogoAuditLog[];
+  settings: BrandSystemSettings;
+  products: Product[];
+  categories: ProductCategory[];
+  orders: Order[];
+  customers: Customer[];
+  coupons: Coupon[];
+  reviews: ProductReview[];
+  staff: AdminStaff[];
+  currentStaffId: string;
+  adminAuditLogs: AdminAuditLogEntry[];
+  notifications: SystemNotification[];
+  staticPages: StaticPage[];
+  banners: HomepageBanner[];
+  lowStockThreshold: number;
+  siteConfig: SiteConfig;
+}
+
 // In-Memory Database Controller (simulates full MySQL relational query & transactional state)
 class MySQLBrandDatabase {
   private versions: LogoVersion[] = [...INITIAL_VERSIONS];
@@ -1483,6 +1503,61 @@ class MySQLBrandDatabase {
     return () => {
       this.listeners = this.listeners.filter(l => l !== fn);
     };
+  }
+
+  public exportSnapshot(): MySQLDatabaseSnapshot {
+    return structuredClone({
+      versions: this.versions,
+      auditLogs: this.auditLogs,
+      settings: this.settings,
+      products: this.products,
+      categories: this.categories,
+      orders: this.orders,
+      customers: this.customers,
+      coupons: this.coupons,
+      reviews: this.reviews,
+      staff: this.staff,
+      currentStaffId: this.currentStaffId,
+      adminAuditLogs: this.adminAuditLogs,
+      notifications: this.notifications,
+      staticPages: this.staticPages,
+      banners: this.banners,
+      lowStockThreshold: this.lowStockThreshold,
+      siteConfig: this.siteConfig,
+    });
+  }
+
+  public importSnapshot(snapshot: MySQLDatabaseSnapshot): void {
+    this.versions = structuredClone(snapshot.versions);
+    this.auditLogs = structuredClone(snapshot.auditLogs);
+    this.settings = structuredClone(snapshot.settings);
+    this.products = structuredClone(snapshot.products);
+    this.categories = structuredClone(snapshot.categories);
+    this.orders = structuredClone(snapshot.orders);
+    this.customers = structuredClone(snapshot.customers);
+    this.coupons = structuredClone(snapshot.coupons);
+    this.reviews = structuredClone(snapshot.reviews);
+    this.staff = structuredClone(snapshot.staff);
+    this.currentStaffId = snapshot.currentStaffId;
+    this.adminAuditLogs = structuredClone(snapshot.adminAuditLogs);
+    this.notifications = structuredClone(snapshot.notifications);
+    this.staticPages = structuredClone(snapshot.staticPages);
+    this.banners = structuredClone(snapshot.banners);
+    this.lowStockThreshold = snapshot.lowStockThreshold;
+    this.siteConfig = structuredClone(snapshot.siteConfig);
+    this.notify();
+  }
+
+  public importPublicSnapshot(snapshot: Partial<MySQLDatabaseSnapshot>): void {
+    if (snapshot.versions) this.versions = structuredClone(snapshot.versions);
+    if (snapshot.settings) this.settings = structuredClone(snapshot.settings);
+    if (snapshot.products) this.products = structuredClone(snapshot.products);
+    if (snapshot.categories) this.categories = structuredClone(snapshot.categories);
+    if (snapshot.reviews) this.reviews = structuredClone(snapshot.reviews);
+    if (snapshot.staticPages) this.staticPages = structuredClone(snapshot.staticPages);
+    if (snapshot.banners) this.banners = structuredClone(snapshot.banners);
+    if (snapshot.siteConfig) this.siteConfig = structuredClone(snapshot.siteConfig);
+    this.notify();
   }
 
   private notify() {

@@ -1,7 +1,20 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Product, Order, LogoConfig, StaticPage, ProductReview } from '../../types/logo';
 import { db } from '../../services/mysqlMockDb';
-import { BrandLogo } from '../logo/BrandLogo';
+import { confirmStripePayment, createCheckout, loadAccountProfile, loadCustomerOrders } from '../../services/api';
+import {
+  firebaseAuth,
+  firebaseConfigured,
+  observeFirebaseUser,
+  requestPasswordReset,
+  sendPhoneOtp,
+  signInWithEmail,
+  signInWithGoogle,
+  signOutFirebase,
+  verifyPhoneOtp
+} from '../../services/firebaseAuth';
+import type { ConfirmationResult, User as FirebaseUser } from 'firebase/auth';
+import logoImage from '../../assets/images/logo.png.png';
 import {
   Search,
   Heart,
@@ -52,10 +65,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
   const [inStockOnly, setInStockOnly] = useState<boolean>(false);
 
   // Wishlist state (REQ-CRT-002)
-  const [wishlist, setWishlist] = useState<Product[]>([
-    db.getProducts()[1],
-    db.getProducts()[2]
-  ]);
+  const [wishlist, setWishlist] = useState<Product[]>([]);
   const [isWishlistOpen, setIsWishlistOpen] = useState<boolean>(false);
 
   const toggleWishlist = (product: Product) => {
@@ -72,34 +82,36 @@ export const Storefront: React.FC<StorefrontProps> = ({
   // Customer Account & Authentication state (REQ-USR-001..004)
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'otp' | 'forgot_password'>('login');
-  const [authEmail, setAuthEmail] = useState<string>('asha.v@techrefresh.com');
-  const [authPassword, setAuthPassword] = useState<string>('••••••••');
-  const [authPhone, setAuthPhone] = useState<string>('+91 98765 43210');
+  const [authEmail, setAuthEmail] = useState<string>('');
+  const [authPassword, setAuthPassword] = useState<string>('');
+  const [authPhone, setAuthPhone] = useState<string>('');
   const [authOtpCode, setAuthOtpCode] = useState<string>('');
-  const [isCustomerLoggedIn, setIsCustomerLoggedIn] = useState<boolean>(true);
-  const [customerName, setCustomerName] = useState<string>('Asha Verma');
+  const [phoneConfirmation, setPhoneConfirmation] = useState<ConfirmationResult | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string>('');
+  const [isCustomerLoggedIn, setIsCustomerLoggedIn] = useState<boolean>(false);
+  const [customerName, setCustomerName] = useState<string>('');
+  const [customerUser, setCustomerUser] = useState<FirebaseUser | null>(null);
+  const [customerOrders, setCustomerOrders] = useState<Order[]>([]);
+  const [isCheckoutLoading, setIsCheckoutLoading] = useState<boolean>(false);
+  const [checkoutError, setCheckoutError] = useState<string>('');
   const [otpNotificationMessage, setOtpNotificationMessage] = useState<string>('');
-  const [savedAddresses, setSavedAddresses] = useState([
-    {
-      id: 'addr_1',
-      label: 'Corporate Tech Park (Default)',
-      firstName: 'Asha',
-      lastName: 'Verma',
-      address: '14 Residency Road, Tech Zone 4',
-      city: 'Bengaluru',
-      pincode: '560001'
-    },
-    {
-      id: 'addr_2',
-      label: 'Regional Hub',
-      firstName: 'Asha',
-      lastName: 'Verma',
-      address: 'Building 7, DLF Cyber City',
-      city: 'Gurugram',
-      pincode: '122002'
+  const [savedAddresses] = useState<Array<{ id: string; label: string; firstName: string; lastName: string; address: string; city: string; pincode: string }>>([]);
+  const [selectedAddressId, setSelectedAddressId] = useState<string>('');
+
+  useEffect(() => observeFirebaseUser(user => {
+    setCustomerUser(user);
+    setIsCustomerLoggedIn(Boolean(user));
+    setCustomerName(user?.displayName || user?.phoneNumber || user?.email || '');
+    setAuthEmail(user?.email ?? '');
+    setAuthPhone(user?.phoneNumber ?? '');
+    if (user) {
+      void loadAccountProfile(user).catch(() => undefined);
+      void loadCustomerOrders(user).then(setCustomerOrders).catch(() => setCustomerOrders([]));
+    } else {
+      setCustomerOrders([]);
     }
-  ]);
-  const [selectedAddressId, setSelectedAddressId] = useState<string>('addr_1');
+  }), []);
 
   // Static Content Pages Modal (REQ-PRM-003)
   const [showStaticModal, setShowStaticModal] = useState<boolean>(false);
@@ -133,10 +145,32 @@ export const Storefront: React.FC<StorefrontProps> = ({
   };
 
   // Cart state
-  const [cart, setCart] = useState<{ product: Product; quantity: number; selectedVariant?: string }[]>([
-    { product: db.getProducts()[0], quantity: 1, selectedVariant: '32GB RAM / 1TB SSD' },
-    { product: db.getProducts()[2], quantity: 1, selectedVariant: 'Medium (80cm)' }
-  ]);
+  const [cart, setCart] = useState<{ product: Product; quantity: number; selectedVariant?: string }[]>(() => {
+    try {
+      const savedItems = JSON.parse(localStorage.getItem('trs_cart_v1') ?? '[]');
+      if (!Array.isArray(savedItems)) return [];
+      return savedItems.reduce((items, savedItem) => {
+        const product = db.getProducts().find(candidate => candidate.id === savedItem.productId);
+        if (product && Number.isInteger(savedItem.quantity) && savedItem.quantity > 0) {
+          items.push({ product, quantity: savedItem.quantity, selectedVariant: savedItem.selectedVariant });
+        }
+        return items;
+      }, [] as { product: Product; quantity: number; selectedVariant?: string }[]);
+    } catch {
+      return [];
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('trs_cart_v1', JSON.stringify(cart.map(item => ({
+        productId: item.product.id,
+        quantity: item.quantity,
+        selectedVariant: item.selectedVariant
+      }))));
+    } catch {
+      setCheckoutError('Your cart could not be saved in this browser.');
+    }
+  }, [cart]);
   const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
   const [appliedCoupon, setAppliedCoupon] = useState<string>('');
   const [couponDiscount, setCouponDiscount] = useState<number>(0);
@@ -154,20 +188,63 @@ export const Storefront: React.FC<StorefrontProps> = ({
 
   // Checkout Form state
   const [checkoutData, setCheckoutData] = useState({
-    firstName: 'Asha',
-    lastName: 'Verma',
-    address: '14 Residency Road, Tech Zone 4',
-    city: 'Bengaluru',
-    pincode: '560001',
-    paymentMethod: 'Card' as 'Card' | 'UPI' | 'Net Banking' | 'Cash on Delivery'
+    firstName: '',
+    lastName: '',
+    address: '',
+    city: '',
+    pincode: '',
+    paymentMethod: 'Card' as 'Card' | 'Cash on Delivery'
   });
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
+
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (query.get('checkout') === 'cancelled') {
+      setCheckoutError('Payment was cancelled. Your cart is still available to try again.');
+      setCurrentView('checkout');
+      window.history.replaceState({}, '', window.location.pathname);
+      return;
+    }
+    const orderId = query.get('order');
+    const sessionId = query.get('session');
+    if (query.get('checkout') !== 'success' || !orderId || !sessionId) return;
+
+    let isMounted = true;
+    const unsubscribe = observeFirebaseUser(user => {
+      if (!user || !isMounted) return;
+      void confirmStripePayment(user, orderId, sessionId)
+        .then(async order => {
+          if (!isMounted) return;
+          setCheckoutError('');
+          setPlacedOrder(order);
+          setTrackedOrderNumber(order.orderNumber);
+          setCart([]);
+          setCurrentView('order_success');
+          setCustomerOrders(await loadCustomerOrders(user));
+        })
+        .catch(error => {
+          if (isMounted) {
+            setCheckoutError(error instanceof Error ? error.message : 'Payment could not be verified.');
+            setCurrentView('checkout');
+          }
+        })
+        .finally(() => window.history.replaceState({}, '', window.location.pathname));
+    });
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, []);
 
   // Active logo config from MySQL
   const activeLogo = db.getActiveVersion();
 
   // Price calculations (REQ-CHK002)
-  const cartSubtotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const getCartUnitPrice = (item: { product: Product; selectedVariant?: string }) =>
+    item.selectedVariant
+      ? item.product.variants.find(variant => variant.title === item.selectedVariant)?.price ?? item.product.price
+      : item.product.price;
+  const cartSubtotal = cart.reduce((sum, item) => sum + getCartUnitPrice(item) * item.quantity, 0);
   const cartShipping = shippingMethod === 'Standard Shipping (Free)'
     ? (cartSubtotal > 150 ? 0 : 12.0)
     : shippingMethod === 'Express Courier ($25)'
@@ -229,39 +306,49 @@ export const Storefront: React.FC<StorefrontProps> = ({
     }
   };
 
-  const handlePlaceOrder = () => {
-    const newOrder = db.placeOrder({
-      customerName: `${checkoutData.firstName} ${checkoutData.lastName}`,
-      customerEmail: authEmail || 'asha.v@techrefresh.com',
-      items: cart.map(i => ({
-        productId: i.product.id,
-        productName: i.product.name,
-        price: i.product.price,
-        quantity: i.quantity,
-        variantTitle: i.selectedVariant,
-        image: i.product.images[0]
-      })),
-      subtotal: cartSubtotal,
-      shipping: cartShipping,
-      shippingMethod,
-      tax: cartTax,
-      discount: couponDiscount,
-      total: cartTotal,
-      paymentMethod: checkoutData.paymentMethod,
-      paymentStatus: checkoutData.paymentMethod === 'Cash on Delivery' ? 'Pending' : 'Paid',
-      shippingAddress: {
-        firstName: checkoutData.firstName,
-        lastName: checkoutData.lastName,
-        address: checkoutData.address,
-        city: checkoutData.city,
-        pincode: checkoutData.pincode
-      }
-    });
+  const handlePlaceOrder = async () => {
+    if (!customerUser) {
+      setAuthMode('login');
+      setShowAuthModal(true);
+      return;
+    }
 
-    setPlacedOrder(newOrder);
-    setTrackedOrderNumber(newOrder.orderNumber);
-    setCart([]);
-    setCurrentView('order_success');
+    setCheckoutError('');
+    setIsCheckoutLoading(true);
+    try {
+      const result = await createCheckout(customerUser, {
+        items: cart.map(item => ({
+          productId: item.product.id,
+          quantity: item.quantity,
+          variantTitle: item.selectedVariant
+        })),
+        shippingMethod,
+        paymentMethod: checkoutData.paymentMethod,
+        couponCode: appliedCoupon || undefined,
+        shippingAddress: {
+          firstName: checkoutData.firstName,
+          lastName: checkoutData.lastName,
+          address: checkoutData.address,
+          city: checkoutData.city,
+          pincode: checkoutData.pincode
+        }
+      });
+
+      if (result.checkoutUrl) {
+        window.location.assign(result.checkoutUrl);
+        return;
+      }
+      if (!result.order) throw new Error('The server did not return an order.');
+      setPlacedOrder(result.order);
+      setTrackedOrderNumber(result.order.orderNumber);
+      setCart([]);
+      setCurrentView('order_success');
+      setCustomerOrders(await loadCustomerOrders(customerUser));
+    } catch (error) {
+      setCheckoutError(error instanceof Error ? error.message : 'Unable to place your order.');
+    } finally {
+      setIsCheckoutLoading(false);
+    }
   };
 
   // Filtered & Sorted products (REQ-BRW001, REQ-BRW002, REQ-BRW003)
@@ -382,7 +469,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
             onClick={() => setCurrentView('home')}
             className="flex items-center text-left focus:outline-none cursor-pointer"
           >
-            <BrandLogo config={activeLogo.config} size="md" />
+            <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-10 max-w-[180px] object-contain" />
           </button>
 
           {/* Zone 2: Dynamic category navigation links */}
@@ -1262,7 +1349,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
 
                   <h3 className="font-serif text-base font-bold text-[#20241F] pt-3">3. Payment Method</h3>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {(['Card', 'UPI', 'Net Banking', 'Cash on Delivery'] as const).map(method => (
+                    {(['Card', 'Cash on Delivery'] as const).map(method => (
                       <button
                         key={method}
                         type="button"
@@ -1294,7 +1381,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                           <strong className="text-[#20241F] block">{item.product.name}</strong>
                           <span className="text-[#666B62]">Qty: {item.quantity} {item.selectedVariant ? `· ${item.selectedVariant}` : ''}</span>
                         </div>
-                        <span className="font-mono font-semibold">${(item.product.price * item.quantity).toFixed(2)}</span>
+                        <span className="font-mono font-semibold">${(getCartUnitPrice(item) * item.quantity).toFixed(2)}</span>
                       </div>
                     ))}
                   </div>
@@ -1341,12 +1428,13 @@ export const Storefront: React.FC<StorefrontProps> = ({
                     </div>
                   </div>
 
+                  {checkoutError && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-3" role="alert">{checkoutError}</p>}
                   <button
                     onClick={handlePlaceOrder}
-                    disabled={cart.length === 0}
+                    disabled={cart.length === 0 || isCheckoutLoading}
                     className="w-full py-3 bg-[#0F5257] hover:bg-[#0B3D3F] text-white rounded-lg text-sm font-semibold transition-all shadow-sm cursor-pointer disabled:opacity-50"
                   >
-                    Place order (${cartTotal.toFixed(2)})
+                    {isCheckoutLoading ? 'Processing...' : checkoutData.paymentMethod === 'Card' ? `Continue to secure payment ($${cartTotal.toFixed(2)})` : `Place COD order ($${cartTotal.toFixed(2)})`}
                   </button>
                 </div>
               </div>
@@ -1372,7 +1460,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
               <div className="bg-[#FAF8F3] p-6 rounded-xl border border-[#E4E1D6] text-left space-y-4 mt-6">
                 <div className="flex items-center justify-between border-b border-[#E4E1D6] pb-4">
                   <div>
-                    <BrandLogo config={activeLogo.config} size="sm" />
+                    <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-8 max-w-[160px] object-contain" />
                     <span className="text-[11px] text-[#666B62] block mt-1">Official Packing Slip &amp; Tax Invoice</span>
                   </div>
                   <div className="text-right text-xs">
@@ -1492,7 +1580,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                           </button>
                         </div>
                         <span className="font-mono text-xs font-semibold text-[#0B3D3F]">
-                          ${(item.product.price * item.quantity).toFixed(2)}
+                          ${(getCartUnitPrice(item) * item.quantity).toFixed(2)}
                         </span>
                       </div>
                     </div>
@@ -1537,7 +1625,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
       <footer className="bg-[#1E2320] text-[#EDEFEA] border-t border-neutral-800 py-12 mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="space-y-3">
-            <BrandLogo config={activeLogo.config} themeMode="dark" size="md" />
+            <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-10 max-w-[180px] object-contain" />
             <p className="text-xs text-[#9AA39B] max-w-xs leading-relaxed">
               {activeLogo.config.brandName} — Configurable enterprise catalog, certified technical refresh solutions, and sustainable procurement architecture.
             </p>
@@ -1619,8 +1707,8 @@ export const Storefront: React.FC<StorefrontProps> = ({
               />
               <button
                 onClick={() => {
-                  const ord = db.getOrders().find(o => o.orderNumber.toLowerCase() === trackedOrderNumber.trim().toLowerCase());
-                  if (!ord) alert('Order not found. Please try TRS-ORD-8829 or check your confirmation email.');
+                  const ord = customerOrders.find(o => o.orderNumber.toLowerCase() === trackedOrderNumber.trim().toLowerCase());
+                  if (!ord) alert('Order not found in your account.');
                 }}
                 className="px-4 py-2 bg-[#0F5257] hover:bg-[#0B3D3F] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer"
               >
@@ -1630,7 +1718,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
 
             {/* Order details display */}
             {(() => {
-              const matchedOrder = db.getOrders().find(o => o.orderNumber.toLowerCase() === trackedOrderNumber.trim().toLowerCase()) || db.getOrders()[0];
+              const matchedOrder = customerOrders.find(o => o.orderNumber.toLowerCase() === trackedOrderNumber.trim().toLowerCase());
               if (!matchedOrder) {
                 return (
                   <div className="text-center py-6 text-xs text-[#666B62]">
@@ -1871,12 +1959,11 @@ export const Storefront: React.FC<StorefrontProps> = ({
                   <div>
                     <strong className="text-sm font-serif text-[#20241F] block">{customerName}</strong>
                     <span className="text-[#666B62]">{authEmail} · {authPhone}</span>
-                    <span className="text-emerald-700 font-semibold block mt-1">✓ Active Verified Corporate Customer</span>
+                    <span className="text-emerald-700 font-semibold block mt-1">Authenticated account</span>
                   </div>
                   <button
                     onClick={() => {
-                      setIsCustomerLoggedIn(false);
-                      setCustomerName('');
+                      void signOutFirebase();
                     }}
                     className="px-3 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
                   >
@@ -1894,6 +1981,9 @@ export const Storefront: React.FC<StorefrontProps> = ({
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {savedAddresses.length === 0 && (
+                      <p className="text-xs text-[#666B62]">No saved addresses yet. Add delivery details during checkout.</p>
+                    )}
                     {savedAddresses.map(addr => (
                       <div key={addr.id} className="p-3.5 rounded-xl border border-[#E4E1D6] bg-white text-xs space-y-1.5 relative">
                         <div className="flex justify-between items-center">
@@ -1928,7 +2018,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                     Recent Order History &amp; Tracking (REQ-ORD001)
                   </h4>
                   <div className="divide-y divide-[#E4E1D6] border border-[#E4E1D6] rounded-xl overflow-hidden text-xs">
-                    {db.getOrders().slice(0, 3).map(ord => (
+                    {customerOrders.slice(0, 3).map(ord => (
                       <div key={ord.id} className="p-3 bg-white hover:bg-[#FAF8F3] flex justify-between items-center">
                         <div>
                           <strong className="font-mono text-[#0F5257] block">{ord.orderNumber}</strong>
@@ -1985,15 +2075,20 @@ export const Storefront: React.FC<StorefrontProps> = ({
                     <span>{otpNotificationMessage}</span>
                   </div>
                 )}
+                {authError && <div className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-lg">{authError}</div>}
+                {!firebaseConfigured && <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">Sign-in is not configured for this deployment.</div>}
 
                 {/* Tab 1: Email Password Login */}
                 {authMode === 'login' && (
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
-                      setIsCustomerLoggedIn(true);
-                      setCustomerName('Asha Verma');
-                      setShowAuthModal(false);
+                      setAuthError('');
+                      setIsAuthLoading(true);
+                      void signInWithEmail(authEmail, authPassword)
+                        .then(() => setShowAuthModal(false))
+                        .catch(error => setAuthError(error instanceof Error ? error.message : 'Sign-in failed.'))
+                        .finally(() => setIsAuthLoading(false));
                     }}
                     className="space-y-3"
                   >
@@ -2019,7 +2114,8 @@ export const Storefront: React.FC<StorefrontProps> = ({
                     </div>
                     <button
                       type="submit"
-                      className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] text-white rounded-lg text-xs font-semibold transition-all cursor-pointer"
+                      disabled={!firebaseConfigured || isAuthLoading}
+                      className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:cursor-not-allowed"
                     >
                       Sign In with Email
                     </button>
@@ -2036,17 +2132,26 @@ export const Storefront: React.FC<StorefrontProps> = ({
                           type="tel"
                           value={authPhone}
                           onChange={(e) => setAuthPhone(e.target.value)}
+                          placeholder="+1 555 000 0000"
                           className="flex-1 px-3 py-2 text-xs font-mono rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]"
                         />
                         <button
                           type="button"
+                          disabled={!firebaseConfigured || isAuthLoading || !authPhone.trim()}
                           onClick={() => {
-                            const code = Math.floor(100000 + Math.random() * 900000).toString();
-                            setAuthOtpCode(code);
-                            setOtpNotificationMessage(`Simulated SMS Sent to ${authPhone}: Your verification OTP code is ${code}`);
-                            db.addAdminAuditLog('Customer', 'OTP_DISPATCH', `Dispatched SMS OTP ${code} to ${authPhone}`);
+                            setAuthError('');
+                            setOtpNotificationMessage('');
+                            setIsAuthLoading(true);
+                            void sendPhoneOtp(authPhone, 'phone-otp-recaptcha')
+                              .then(confirmation => {
+                                setPhoneConfirmation(confirmation);
+                                setAuthOtpCode('');
+                                setOtpNotificationMessage(`Verification code sent to ${authPhone}.`);
+                              })
+                              .catch(error => setAuthError(error instanceof Error ? error.message : 'Unable to send verification code.'))
+                              .finally(() => setIsAuthLoading(false));
                           }}
-                          className="px-4 py-2 bg-[#FAF8F3] hover:bg-[#EAE6D8] border border-[#E4E1D6] text-xs font-semibold text-[#0F5257] rounded-lg shrink-0 cursor-pointer"
+                          className="px-4 py-2 bg-[#FAF8F3] hover:bg-[#EAE6D8] disabled:opacity-50 border border-[#E4E1D6] text-xs font-semibold text-[#0F5257] rounded-lg shrink-0 cursor-pointer disabled:cursor-not-allowed"
                         >
                           Send OTP
                         </button>
@@ -2055,9 +2160,13 @@ export const Storefront: React.FC<StorefrontProps> = ({
 
                     <div>
                       <label className="block text-xs font-medium text-[#666B62] mb-1">Enter 6-Digit OTP</label>
+                      <div id="phone-otp-recaptcha" />
                       <input
                         type="text"
-                        placeholder="e.g. 849201"
+                        inputMode="numeric"
+                        autoComplete="one-time-code"
+                        maxLength={6}
+                        placeholder="6-digit code"
                         value={authOtpCode}
                         onChange={(e) => setAuthOtpCode(e.target.value)}
                         className="w-full px-3 py-2 text-xs font-mono font-bold tracking-widest text-center rounded-lg border border-[#E4E1D6] bg-white"
@@ -2066,16 +2175,17 @@ export const Storefront: React.FC<StorefrontProps> = ({
 
                     <button
                       type="button"
+                      disabled={!phoneConfirmation || authOtpCode.length !== 6 || isAuthLoading}
                       onClick={() => {
-                        if (authOtpCode.length >= 4) {
-                          setIsCustomerLoggedIn(true);
-                          setCustomerName('Asha Verma (Mobile OTP)');
-                          setShowAuthModal(false);
-                        } else {
-                          alert('Please click "Send OTP" first.');
-                        }
+                        if (!phoneConfirmation) return;
+                        setAuthError('');
+                        setIsAuthLoading(true);
+                        void verifyPhoneOtp(phoneConfirmation, authOtpCode)
+                          .then(() => setShowAuthModal(false))
+                          .catch(error => setAuthError(error instanceof Error ? error.message : 'Verification failed.'))
+                          .finally(() => setIsAuthLoading(false));
                       }}
-                      className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] text-white rounded-lg text-xs font-semibold transition-all cursor-pointer"
+                      className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:cursor-not-allowed"
                     >
                       Verify &amp; Sign In
                     </button>
@@ -2087,8 +2197,12 @@ export const Storefront: React.FC<StorefrontProps> = ({
                   <form
                     onSubmit={(e) => {
                       e.preventDefault();
-                      setOtpNotificationMessage(`Password reset link dispatched to ${authEmail}. Please check your inbox.`);
-                      db.addAdminAuditLog('Customer', 'PASSWORD_RESET', `Password reset token email generated for ${authEmail}`);
+                      setAuthError('');
+                      setIsAuthLoading(true);
+                      void requestPasswordReset(authEmail)
+                        .then(() => setOtpNotificationMessage(`Password reset email sent to ${authEmail}.`))
+                        .catch(error => setAuthError(error instanceof Error ? error.message : 'Unable to send reset email.'))
+                        .finally(() => setIsAuthLoading(false));
                     }}
                     className="space-y-3"
                   >
@@ -2111,31 +2225,24 @@ export const Storefront: React.FC<StorefrontProps> = ({
                   </form>
                 )}
 
-                {/* Social Login Simulation (REQ-USR-004) */}
+                {/* Google sign-in */}
                 <div className="pt-2 border-t border-[#E4E1D6] space-y-2">
-                  <span className="text-[11px] text-[#666B62] block text-center">Or continue with Social Login (REQ-USR-004)</span>
-                  <div className="grid grid-cols-2 gap-2">
+                  <span className="text-[11px] text-[#666B62] block text-center">Or continue with Google</span>
+                  <div className="grid grid-cols-1 gap-2">
                     <button
                       type="button"
+                      disabled={!firebaseConfigured || isAuthLoading}
                       onClick={() => {
-                        setIsCustomerLoggedIn(true);
-                        setCustomerName('Alex Morgan (Google)');
-                        setShowAuthModal(false);
+                        setAuthError('');
+                        setIsAuthLoading(true);
+                        void signInWithGoogle()
+                          .then(() => setShowAuthModal(false))
+                          .catch(error => setAuthError(error instanceof Error ? error.message : 'Google sign-in failed.'))
+                          .finally(() => setIsAuthLoading(false));
                       }}
-                      className="py-2 px-3 border border-[#E4E1D6] rounded-lg text-xs font-medium hover:bg-[#FAF8F3] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      className="py-2 px-3 border border-[#E4E1D6] rounded-lg text-xs font-medium hover:bg-[#FAF8F3] disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
                     >
                       <span>Continue with Google</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCustomerLoggedIn(true);
-                        setCustomerName('Jordan Reed (Facebook)');
-                        setShowAuthModal(false);
-                      }}
-                      className="py-2 px-3 border border-[#E4E1D6] rounded-lg text-xs font-medium hover:bg-[#FAF8F3] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <span>Continue with Facebook</span>
                     </button>
                   </div>
                 </div>
@@ -2166,7 +2273,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
               {activeStaticPage.content}
             </div>
 
-            <div className="flex justify-end pt-2 border-t border-[#E4E1D6]">
+            <div className="flex justify-end pt-2 border-t border-[#b09c57]">
               <button
                 onClick={() => setShowStaticModal(false)}
                 className="px-4 py-2 bg-[#0F5257] text-white text-xs font-semibold rounded-lg cursor-pointer"

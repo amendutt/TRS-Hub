@@ -7,11 +7,13 @@ import React, { useState, useEffect } from 'react';
 import { Storefront } from './components/storefront/Storefront';
 import { AdminPortal } from './components/admin/AdminPortal';
 import { db } from './services/mysqlMockDb';
+import { loadPublicState } from './services/api';
 
 export default function App() {
   const [currentAppMode, setCurrentAppMode] = useState<'storefront' | 'admin' | 'logo_studio'>('storefront');
   const [activeVersionTag, setActiveVersionTag] = useState<string>(db.getActiveVersion().versionTag);
   const [activeBrandName, setActiveBrandName] = useState<string>(db.getActiveVersion().config.brandName);
+  const [isStoreLoaded, setIsStoreLoaded] = useState(false);
 
   useEffect(() => {
     const unsub = db.subscribe(() => {
@@ -19,6 +21,19 @@ export default function App() {
       setActiveBrandName(db.getActiveVersion().config.brandName);
     });
     return unsub;
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    loadPublicState()
+      .then(snapshot => {
+        if (isMounted && snapshot) db.importPublicSnapshot(snapshot);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (isMounted) setIsStoreLoaded(true);
+      });
+    return () => { isMounted = false; };
   }, []);
 
   return (
@@ -76,21 +91,21 @@ export default function App() {
       </div>
 
       {/* View Rendering */}
-      {currentAppMode === 'storefront' && (
+      {!isStoreLoaded ? (
+        <div className="min-h-[70vh] flex items-center justify-center text-sm text-[#666B62]" role="status">
+          Loading store...
+        </div>
+      ) : currentAppMode === 'storefront' ? (
         <Storefront
           onOpenAdminPortal={() => setCurrentAppMode('admin')}
           onOpenLogoStudio={() => setCurrentAppMode('logo_studio')}
         />
-      )}
-
-      {currentAppMode === 'admin' && (
+      ) : currentAppMode === 'admin' ? (
         <AdminPortal
           initialTab="dashboard"
           onBackToStorefront={() => setCurrentAppMode('storefront')}
         />
-      )}
-
-      {currentAppMode === 'logo_studio' && (
+      ) : (
         <AdminPortal
           initialTab="logo_studio"
           onBackToStorefront={() => setCurrentAppMode('storefront')}

@@ -10,6 +10,7 @@ import {
 } from '../../types/logo';
 import { db, MYSQL_DDL_SCHEMA } from '../../services/mysqlMockDb';
 import { BrandLogo, BrandLogoMark } from './BrandLogo';
+import logoImage from '../../assets/images/logo.png.png';
 import {
   Palette,
   History,
@@ -274,7 +275,7 @@ export const LogoTechnicalRefreshStudio: React.FC<{
 
         {/* Decorative Watermark Mark */}
         <div className="absolute right-[-20px] top-[-30px] opacity-10 pointer-events-none">
-          <BrandLogoMark shape="haven_arch" primaryColor="#FFFFFF" accentColor="#D9A441" size={260} />
+          <img src={logoImage} alt="" className="h-64 w-auto object-contain" />
         </div>
       </div>
 

@@ -1,33 +1,42 @@
-import React from 'react';
-import { LogoConfig, LogoMarkShape } from '../../types/logo';
+import React, { FC } from 'react';
+import type { LogoConfig, LogoMarkShape } from '../../types/logo';
 
-interface BrandLogoProps {
-  config: LogoConfig;
+export interface BrandLogoProps {
+  config?: LogoConfig;
   variant?: 'horizontal' | 'stacked' | 'icon_only' | 'text_only';
-  themeMode?: 'light' | 'dark' | 'monochrome';
+  themeMode?: 'dark' | 'light' | 'monochrome';
   className?: string;
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   showTaglineOverride?: boolean;
 }
 
-export const BrandLogoMark: React.FC<{
+export interface BrandLogoMarkProps {
   shape: LogoMarkShape;
-  primaryColor: string;
-  accentColor: string;
+  primaryColor?: string;
+  accentColor?: string;
   stemColor?: string;
   badgeBorderColor?: string;
   badgeFillColor?: string;
   size?: number;
-}> = ({ shape, primaryColor, accentColor, stemColor, badgeBorderColor, badgeFillColor, size = 32 }) => {
+}
+
+export const BrandLogoMark: FC<BrandLogoMarkProps> = ({
+  shape,
+  primaryColor = '#38a169',
+  accentColor = '#60656a',
+  stemColor,
+  badgeBorderColor,
+  badgeFillColor,
+  size = 32,
+}) => {
   if (shape === 'none') return null;
 
-  const stemFill = stemColor || accentColor || '#E2E8F0';
-  const badgeBorder = badgeBorderColor || '#E2E8F0';
-  const badgeFill = badgeFillColor || '#FFFFFF';
+  const stemFill = stemColor || accentColor || '#60656a';
+  const badgeBorder = badgeBorderColor || '#3c4c62';
+  const badgeFill = badgeFillColor || '#ffffff';
 
   switch (shape) {
     case 'trs_badge':
-      // Authentic Tech Refresh Solution Official Squircle Badge from uploaded PNG
       return (
         <svg
           width={size}
@@ -37,7 +46,6 @@ export const BrandLogoMark: React.FC<{
           xmlns="http://www.w3.org/2000/svg"
           className="shrink-0 transition-transform duration-200"
         >
-          {/* Squircle Outer Frame with soft rounded border */}
           <rect
             x="14"
             y="12"
@@ -50,32 +58,9 @@ export const BrandLogoMark: React.FC<{
             fill={badgeFill}
             fillOpacity="0.95"
           />
-
-          {/* Top-Right Soft Complementary Circuit Stem */}
-          <path
-            d="M136 56H178"
-            stroke={stemFill}
-            strokeWidth="20"
-            strokeLinecap="round"
-          />
-
-          {/* Left Vertical Circuit Column */}
-          <path
-            d="M92 84V168"
-            stroke={stemFill}
-            strokeWidth="18"
-            strokeLinecap="round"
-          />
-
-          {/* Right Vertical Circuit Column */}
-          <path
-            d="M148 84V168"
-            stroke={stemFill}
-            strokeWidth="18"
-            strokeLinecap="round"
-          />
-
-          {/* Signature Vibrant Green Tech Refresh Wave Path */}
+          <path d="M136 56H178" stroke={stemFill} strokeWidth="20" strokeLinecap="round" />
+          <path d="M92 84V168" stroke={stemFill} strokeWidth="18" strokeLinecap="round" />
+          <path d="M148 84V168" stroke={stemFill} strokeWidth="18" strokeLinecap="round" />
           <path
             d="M62 56H100C118 56 122 86 140 86H178"
             stroke={primaryColor}
@@ -87,7 +72,6 @@ export const BrandLogoMark: React.FC<{
       );
 
     case 'trs_minimal':
-      // Dynamic Green Wave & Circuit paths without outer badge
       return (
         <svg
           width={size}
@@ -98,12 +82,12 @@ export const BrandLogoMark: React.FC<{
           className="shrink-0"
         >
           <path d="M106 32H148" stroke={stemFill} strokeWidth="18" strokeLinecap="round" />
-          <path d="M62 60V126" stroke={stemFill} strokeWidth="16" strokeLinecap="round" />
-          <path d="M118 60V126" stroke={stemFill} strokeWidth="16" strokeLinecap="round" />
+          <path d="M62 60V130" stroke={stemFill} strokeWidth="18" strokeLinecap="round" />
+          <path d="M118 60V130" stroke={stemFill} strokeWidth="18" strokeLinecap="round" />
           <path
             d="M32 32H70C88 32 92 62 110 62H148"
             stroke={primaryColor}
-            strokeWidth="18"
+            strokeWidth="20"
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -111,7 +95,6 @@ export const BrandLogoMark: React.FC<{
       );
 
     case 'haven_arch':
-      // Architectural Scandinavian harbor arch with warm sun accent dot
       return (
         <svg
           width={size}
@@ -121,29 +104,32 @@ export const BrandLogoMark: React.FC<{
           xmlns="http://www.w3.org/2000/svg"
           className="shrink-0 transition-transform duration-200"
         >
-          {/* Outer sanctuary arch */}
           <path
             d="M6 26V16C6 10.4772 10.4772 6 16 6C21.5228 6 26 10.4772 26 16V26"
             stroke={primaryColor}
             strokeWidth="2.75"
             strokeLinecap="round"
           />
-          {/* Inner minimalist haven aperture */}
           <path
             d="M11 26V18C11 15.2386 13.2386 13 16 13C18.7614 13 21 15.2386 21 18V26"
             stroke={accentColor}
             strokeWidth="2"
             strokeLinecap="round"
           />
-          {/* Golden sun core */}
           <circle cx="16" cy="18" r="2.2" fill={accentColor} />
-          {/* Base waterline threshold */}
-          <line x1="4" y1="26" x2="28" y2="26" stroke={primaryColor} strokeWidth="2.2" strokeLinecap="round" />
+          <line
+            x1="4"
+            y1="26"
+            x2="28"
+            y2="26"
+            stroke={primaryColor}
+            strokeWidth="2.2"
+            strokeLinecap="round"
+          />
         </svg>
       );
 
     case 'minimal_sail':
-      // Maritime harbor sail line
       return (
         <svg
           width={size}
@@ -153,21 +139,21 @@ export const BrandLogoMark: React.FC<{
           xmlns="http://www.w3.org/2000/svg"
           className="shrink-0"
         >
-          <path
-            d="M16 4C16 4 25 14 25 24H16V4Z"
-            fill={primaryColor}
-            fillOpacity="0.9"
+          <path d="M16 4C16 4 25 14 25 24H16V4Z" fill={primaryColor} fillOpacity="0.9" />
+          <path d="M14 9C14 9 7 17 7 24H14V9Z" fill={accentColor} />
+          <line
+            x1="16"
+            y1="26"
+            x2="16"
+            y2="28"
+            stroke={primaryColor}
+            strokeWidth="2"
+            strokeLinecap="round"
           />
-          <path
-            d="M14 9C14 9 7 17 7 24H14V9Z"
-            fill={accentColor}
-          />
-          <line x1="16" y1="26" x2="16" y2="28" stroke={primaryColor} strokeWidth="2" strokeLinecap="round" />
         </svg>
       );
 
     case 'nordic_h':
-      // Classic Monolithic Serif H
       return (
         <svg
           width={size}
@@ -189,7 +175,6 @@ export const BrandLogoMark: React.FC<{
       );
 
     case 'organic_leaf':
-      // Earthen organic living leaf
       return (
         <svg
           width={size}
@@ -243,46 +228,46 @@ export const BrandLogoMark: React.FC<{
   }
 };
 
-export const BrandLogo: React.FC<BrandLogoProps> = ({
+export const BrandLogo: FC<BrandLogoProps> = ({
   config,
   variant = 'horizontal',
   themeMode = 'light',
   className = '',
   size = 'md',
-  showTaglineOverride
+  showTaglineOverride,
 }) => {
-  // Determine effective colors based on theme mode
-  let primary = config.primaryColor || '#0F5257';
-  let accent = config.accentColor || '#D9A441';
+  const brandConfig: LogoConfig = (config ?? {}) as LogoConfig;
+
+  let primary = brandConfig.primaryColor ?? '#0F5257';
+  let accent = brandConfig.accentColor ?? '#D9A441';
 
   if (themeMode === 'dark') {
-    primary = config.darkPrimaryColor || '#EDEFEA';
-    accent = config.darkAccentColor || '#D9A441';
+    primary = brandConfig.darkPrimaryColor ?? '#EDEFEA';
+    accent = brandConfig.darkAccentColor ?? '#D9A441';
   } else if (themeMode === 'monochrome') {
     primary = '#111827';
     accent = '#4B5563';
   }
 
-  // Dimension scaling
   const sizeMap = {
     xs: { mark: 18, text: '13px', tagline: '8px', gap: 'gap-1.5' },
     sm: { mark: 24, text: '16px', tagline: '9px', gap: 'gap-2' },
     md: { mark: 30, text: '20px', tagline: '10px', gap: 'gap-2.5' },
     lg: { mark: 38, text: '26px', tagline: '11px', gap: 'gap-3' },
-    xl: { mark: 52, text: '36px', tagline: '13px', gap: 'gap-4' }
-  };
+    xl: { mark: 52, text: '36px', tagline: '13px', gap: 'gap-4' },
+  } as const;
 
   const currentSize = sizeMap[size];
-  const markPixelSize = Math.round(currentSize.mark * (config.markScale || 1.0));
-  const showTagline = showTaglineOverride !== undefined ? showTaglineOverride : config.showTagline;
+  const markScale = brandConfig.markScale ?? 1;
+  const markPixelSize = Math.round(currentSize.mark * markScale);
+  const showTagline = showTaglineOverride ?? brandConfig.showTagline;
 
-  // Custom Image Upload mode if set
-  if (config.customImageUrl) {
+  if (brandConfig.customImageUrl) {
     return (
       <div className={`inline-flex items-center ${className}`}>
         <img
-          src={config.customImageUrl}
-          alt={config.brandName}
+          src={brandConfig.customImageUrl}
+          alt={brandConfig.brandName ?? 'Brand logo'}
           className="object-contain"
           style={{ height: `${markPixelSize * 1.5}px` }}
           referrerPolicy="no-referrer"
@@ -291,40 +276,42 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     );
   }
 
-  // Icon only
-  if (variant === 'icon_only' || config.markPosition === 'mark_only') {
+  if (variant === 'icon_only' || brandConfig.markPosition === 'mark_only') {
     return (
-      <div className={`inline-flex items-center justify-center ${className}`} title={config.brandName}>
+      <div
+        className={`inline-flex items-center justify-center ${className}`}
+        title={brandConfig.brandName ?? 'Brand logo'}
+      >
         <BrandLogoMark
-          shape={config.markShape}
+          shape={brandConfig.markShape}
           primaryColor={primary}
           accentColor={accent}
-          stemColor={config.stemColor}
-          badgeBorderColor={config.badgeBorderColor}
-          badgeFillColor={config.badgeFillColor}
+          stemColor={brandConfig.stemColor}
+          badgeBorderColor={brandConfig.badgeBorderColor}
+          badgeFillColor={brandConfig.badgeFillColor}
           size={markPixelSize}
         />
       </div>
     );
   }
 
-  // Text only
-  if (config.markPosition === 'text_only') {
+  if (brandConfig.markPosition === 'text_only') {
     return (
       <div className={`inline-flex flex-col ${className}`}>
         <span
           style={{
-            fontFamily: config.fontFamily || 'Inter',
-            fontWeight: config.fontWeight || 700,
-            letterSpacing: `${config.letterSpacing || 1}px`,
+            fontFamily: brandConfig.fontFamily || 'Inter',
+            fontWeight: brandConfig.fontWeight || 700,
+            letterSpacing: `${brandConfig.letterSpacing || 1}px`,
             fontSize: currentSize.text,
             color: primary,
-            lineHeight: 1.15
+            lineHeight: 1.15,
           }}
         >
-          {config.brandName}
+          {brandConfig.brandName}
         </span>
-        {showTagline && config.tagline && (
+
+        {showTagline && brandConfig.tagline && (
           <span
             style={{
               fontFamily: 'Inter, system-ui, sans-serif',
@@ -332,44 +319,45 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
               letterSpacing: '1.8px',
               fontSize: currentSize.tagline,
               color: accent,
-              marginTop: '2px'
+              marginTop: '2px',
             }}
           >
-            {config.tagline}
+            {brandConfig.tagline}
           </span>
         )}
       </div>
     );
   }
 
-  // Stacked variant (emblem over text, matching the user's uploaded PNG)
-  if (variant === 'stacked' || config.markPosition === 'top') {
+  if (variant === 'stacked' || brandConfig.markPosition === 'top') {
     return (
       <div className={`inline-flex flex-col items-center text-center ${className}`}>
         <BrandLogoMark
-          shape={config.markShape}
+          shape={brandConfig.markShape}
           primaryColor={primary}
           accentColor={accent}
-          stemColor={config.stemColor}
-          badgeBorderColor={config.badgeBorderColor}
-          badgeFillColor={config.badgeFillColor}
+          stemColor={brandConfig.stemColor}
+          badgeBorderColor={brandConfig.badgeBorderColor}
+          badgeFillColor={brandConfig.badgeFillColor}
           size={markPixelSize * 1.3}
         />
+
         <div className="mt-2.5 flex flex-col items-center">
           <span
             style={{
-              fontFamily: config.fontFamily || 'Inter',
-              fontWeight: config.fontWeight || 700,
-              letterSpacing: `${config.letterSpacing || 2}px`,
+              fontFamily: brandConfig.fontFamily || 'Inter',
+              fontWeight: brandConfig.fontWeight || 700,
+              letterSpacing: `${brandConfig.letterSpacing || 2}px`,
               fontSize: currentSize.text,
               color: primary,
               lineHeight: 1.15,
-              textTransform: 'uppercase'
+              textTransform: 'uppercase',
             }}
           >
-            {config.brandName}
+            {brandConfig.brandName}
           </span>
-          {showTagline && config.tagline && (
+
+          {showTagline && brandConfig.tagline && (
             <span
               style={{
                 fontFamily: 'Inter, system-ui, sans-serif',
@@ -377,10 +365,10 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
                 letterSpacing: '2px',
                 fontSize: currentSize.tagline,
                 color: accent,
-                marginTop: '3px'
+                marginTop: '3px',
               }}
             >
-              {config.tagline}
+              {brandConfig.tagline}
             </span>
           )}
         </div>
@@ -388,33 +376,34 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     );
   }
 
-  // Horizontal variant (default)
   return (
     <div className={`inline-flex items-center ${currentSize.gap} ${className}`}>
       <BrandLogoMark
-        shape={config.markShape}
+        shape={brandConfig.markShape}
         primaryColor={primary}
         accentColor={accent}
-        stemColor={config.stemColor}
-        badgeBorderColor={config.badgeBorderColor}
-        badgeFillColor={config.badgeFillColor}
+        stemColor={brandConfig.stemColor}
+        badgeBorderColor={brandConfig.badgeBorderColor}
+        badgeFillColor={brandConfig.badgeFillColor}
         size={markPixelSize}
       />
+
       <div className="flex flex-col justify-center">
         <span
           style={{
-            fontFamily: config.fontFamily || 'Inter',
-            fontWeight: config.fontWeight || 700,
-            letterSpacing: `${config.letterSpacing || 1.5}px`,
+            fontFamily: brandConfig.fontFamily || 'Inter',
+            fontWeight: brandConfig.fontWeight || 700,
+            letterSpacing: `${brandConfig.letterSpacing || 1.5}px`,
             fontSize: currentSize.text,
             color: primary,
             lineHeight: 1.15,
-            textTransform: 'uppercase'
+            textTransform: 'uppercase',
           }}
         >
-          {config.brandName}
+          {brandConfig.brandName}
         </span>
-        {showTagline && config.tagline && (
+
+        {showTagline && brandConfig.tagline && (
           <span
             style={{
               fontFamily: 'Inter, system-ui, sans-serif',
@@ -422,10 +411,10 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
               letterSpacing: '1.6px',
               fontSize: currentSize.tagline,
               color: accent,
-              marginTop: '1px'
+              marginTop: '1px',
             }}
           >
-            {config.tagline}
+            {brandConfig.tagline}
           </span>
         )}
       </div>
