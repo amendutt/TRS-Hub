@@ -1,6 +1,6 @@
 import type { User } from 'firebase/auth';
 import type { MySQLDatabaseSnapshot } from './mysqlMockDb';
-import type { Order } from '../types/logo';
+import type { CustomerAddress, Order } from '../types/logo';
 
 export interface AccountProfile {
   uid: string;
@@ -8,6 +8,8 @@ export interface AccountProfile {
   displayName: string | null;
   phoneNumber: string | null;
   isAdmin: boolean;
+  savedAddresses: CustomerAddress[];
+  wishlist: string[];
 }
 
 export interface CheckoutRequest {
@@ -65,6 +67,16 @@ export async function loadAccountProfile(user: User): Promise<AccountProfile> {
   return authorizedRequest<AccountProfile>(user, '/api/auth/me');
 }
 
+export async function saveAccountProfile(
+  user: User,
+  profile: Pick<AccountProfile, 'savedAddresses' | 'wishlist'>
+): Promise<Pick<AccountProfile, 'savedAddresses' | 'wishlist'>> {
+  return authorizedRequest(user, '/api/auth/profile', {
+    method: 'PUT',
+    body: JSON.stringify(profile)
+  });
+}
+
 export async function createCheckout(user: User, checkout: CheckoutRequest): Promise<{ order?: Order; checkoutUrl?: string; orderId?: string }> {
   return authorizedRequest(user, '/api/payments/checkout', {
     method: 'POST',
@@ -83,4 +95,16 @@ export async function confirmStripePayment(user: User, orderId: string, sessionI
 export async function loadCustomerOrders(user: User): Promise<Order[]> {
   const result = await authorizedRequest<{ orders: Order[] }>(user, '/api/payments/orders');
   return result.orders;
+}
+
+export async function requestAdminRefund(
+  user: User,
+  orderId: string,
+  amount: number,
+  reason: string
+): Promise<{ refundId: string; refundAmount: number; fullyRefunded: boolean }> {
+  return authorizedRequest(user, '/api/payments/admin/refund', {
+    method: 'POST',
+    body: JSON.stringify({ orderId, amount, reason })
+  });
 }

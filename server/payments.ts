@@ -4,7 +4,7 @@ import type { RowDataPacket } from 'mysql2';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { getDatabase } from './database.js';
-import { verifyBearerToken } from './firebase.js';
+import { isAdminEmail, verifyBearerToken } from './firebase.js';
 import type { Order, OrderItem, Product } from '../src/types/logo.js';
 
 const router = Router();
@@ -100,6 +100,8 @@ function formatOrder(row: Record<string, any>): Order {
     paymentMethod: row.payment_method,
     paymentStatus: row.payment_status === 'paid' ? 'Paid' : row.payment_status === 'refunded' ? 'Refunded' : 'Pending',
     orderStatus: row.order_status[0].toUpperCase() + row.order_status.slice(1),
+    refundAmount: Number(row.refund_amount ?? 0) || undefined,
+    refundReason: row.refund_reason ?? undefined,
     shippingAddress: value('shipping_address')
   } as Order;
 }
@@ -260,6 +262,85 @@ router.get('/orders', async (request, response) => {
     response.json({ orders: rows.map(formatOrder) });
   } catch (error) {
     response.status(401).json({ error: error instanceof Error ? error.message : 'Unable to load orders.' });
+  }
+});
+
+router.post('/admin/refund', async (request, response) => {
+  const refundInput = z.object({
+    orderId: z.string().uuid(),
+    amount: z.number().positive().max(1000000),
+    reason: z.string().trim().min(3).max(500)
+  }).safeParse(request.body);
+  if (!refundInput.success) {
+    response.status(400).json({ error: 'Provide a valid order, refund amount, and reason.' });
+    return;
+  }
+
+  let identity;
+  try {
+    identity = await verifyBearerToken(request.header('authorization'));
+  } catch (error) {
+    response.status(401).json({ error: error instanceof Error ? error.message : 'Authentication failed.' });
+    return;
+  }
+  if (!identity.email_verified || !isAdminEmail(identity.email)) {
+    response.status(403).json({ error: 'Admin access is not authorized.' });
+    return;
+  }
+
+  const connection = await getDatabase().getConnection();
+  try {
+    await connection.beginTransaction();
+    const [rows] = await connection.execute<Array<RowDataPacket & Record<string, any>>>(
+      'SELECT * FROM store_orders WHERE id = ? FOR UPDATE', [refundInput.data.orderId]
+    );
+    const order = rows[0];
+    if (!order) {
+      await connection.rollback();
+      response.status(404).json({ error: 'Order not found.' });
+      return;
+    }
+    if (order.payment_provider !== 'stripe' || order.payment_status !== 'paid') {
+      await connection.rollback();
+      response.status(409).json({ error: 'Only paid Stripe orders can be refunded online.' });
+      return;
+    }
+
+    const alreadyRefunded = Number(order.refund_amount ?? 0);
+    const amount = Math.round(refundInput.data.amount * 100) / 100;
+    const totalRefunded = Math.round((alreadyRefunded + amount) * 100) / 100;
+    if (totalRefunded > Number(order.total)) {
+      await connection.rollback();
+      response.status(400).json({ error: 'Refund amount exceeds the remaining paid balance.' });
+      return;
+    }
+
+    const session = await getStripe().checkout.sessions.retrieve(order.payment_provider_id);
+    const paymentIntent = typeof session.payment_intent === 'string'
+      ? session.payment_intent
+      : session.payment_intent?.id;
+    if (!paymentIntent || session.payment_status !== 'paid') {
+      await connection.rollback();
+      response.status(409).json({ error: 'Stripe does not report a settled payment for this order.' });
+      return;
+    }
+    const refund = await getStripe().refunds.create({
+      payment_intent: paymentIntent,
+      amount: Math.round(amount * 100),
+      reason: 'requested_by_customer',
+      metadata: { orderId: order.id, reason: refundInput.data.reason }
+    }, { idempotencyKey: `refund-${order.id}-${totalRefunded.toFixed(2)}` });
+    await connection.execute(
+      `UPDATE store_orders SET refund_amount = ?, refund_reason = ?, payment_status = ? WHERE id = ?`,
+      [totalRefunded, refundInput.data.reason, totalRefunded >= Number(order.total) ? 'refunded' : 'paid', order.id]
+    );
+    await connection.commit();
+    response.json({ refundId: refund.id, refundAmount: totalRefunded, fullyRefunded: totalRefunded >= Number(order.total) });
+  } catch (error) {
+    await connection.rollback();
+    response.status(502).json({ error: error instanceof Error ? error.message : 'Stripe refund failed.' });
+  } finally {
+    connection.release();
   }
 });
 

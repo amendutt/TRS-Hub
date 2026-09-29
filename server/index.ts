@@ -15,6 +15,21 @@ const port = Number(process.env.PORT ?? 3002);
 const rootPath = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const authLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false });
 const stateSchema = z.record(z.string(), z.unknown());
+const customerAddressSchema = z.object({
+  id: z.string().uuid(),
+  label: z.string().trim().min(1).max(80),
+  firstName: z.string().trim().min(1).max(100),
+  lastName: z.string().trim().min(1).max(100),
+  address: z.string().trim().min(1).max(300),
+  city: z.string().trim().min(1).max(120),
+  pincode: z.string().trim().min(2).max(20),
+  phone: z.string().trim().min(5).max(32),
+  isDefault: z.boolean()
+});
+const customerProfileSchema = z.object({
+  savedAddresses: z.array(customerAddressSchema).max(20),
+  wishlist: z.array(z.string().min(1)).max(100)
+});
 
 app.disable('x-powered-by');
 app.use(helmet({
@@ -63,15 +78,51 @@ app.get('/api/auth/me', authLimiter, async (request, response) => {
        ON DUPLICATE KEY UPDATE email = VALUES(email), display_name = VALUES(display_name), phone_number = VALUES(phone_number)`,
       [identity.uid, identity.email ?? null, identity.name ?? null, identity.phone_number ?? null]
     );
+    const [profiles] = await database.execute<Array<RowDataPacket & { saved_addresses: unknown; wishlist: unknown }>>(
+      'SELECT saved_addresses, wishlist FROM customer_profiles WHERE firebase_uid = ?', [identity.uid]
+    );
+    const decodeJson = (value: unknown) => typeof value === 'string' ? JSON.parse(value) : value;
     response.json({
       uid: identity.uid,
       email: identity.email ?? null,
       displayName: identity.name ?? null,
       phoneNumber: identity.phone_number ?? null,
-      isAdmin: Boolean(identity.email_verified && isAdminEmail(identity.email))
+      isAdmin: Boolean(identity.email_verified && isAdminEmail(identity.email)),
+      savedAddresses: decodeJson(profiles[0]?.saved_addresses) ?? [],
+      wishlist: decodeJson(profiles[0]?.wishlist) ?? []
     });
   } catch (error) {
     response.status(401).json({ error: error instanceof Error ? error.message : 'Authentication failed.' });
+  }
+});
+
+app.put('/api/auth/profile', authLimiter, async (request, response) => {
+  try {
+    const identity = await verifyBearerToken(request.header('authorization'));
+    const profile = customerProfileSchema.parse(request.body);
+    if (profile.savedAddresses.filter(address => address.isDefault).length > 1) {
+      response.status(400).json({ error: 'Only one shipping address can be the default.' });
+      return;
+    }
+    const database = getDatabase();
+    const [stateRows] = await database.execute<Array<RowDataPacket & { payload: unknown }>>(
+      'SELECT payload FROM app_state WHERE state_key = ?', ['store']
+    );
+    const state = stateRows[0]
+      ? typeof stateRows[0].payload === 'string' ? JSON.parse(stateRows[0].payload) : stateRows[0].payload as Record<string, any>
+      : {};
+    const publishedIds = new Set((state.products ?? [])
+      .filter((product: { status: string }) => product.status === 'Published')
+      .map((product: { id: string }) => product.id));
+    const validWishlist = profile.wishlist.filter(productId => publishedIds.has(productId));
+    await database.execute(
+      'UPDATE customer_profiles SET saved_addresses = ?, wishlist = ? WHERE firebase_uid = ?',
+      [JSON.stringify(profile.savedAddresses), JSON.stringify(validWishlist), identity.uid]
+    );
+    response.json({ savedAddresses: profile.savedAddresses, wishlist: validWishlist });
+  } catch (error) {
+    const status = error instanceof z.ZodError ? 400 : 401;
+    response.status(status).json({ error: error instanceof Error ? error.message : 'Unable to save customer profile.' });
   }
 });
 

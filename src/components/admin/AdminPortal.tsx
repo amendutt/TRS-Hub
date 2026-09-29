@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../services/mysqlMockDb';
-import { loadAccountProfile, loadAdminState, saveAdminState } from '../../services/api';
+import { loadAccountProfile, loadAdminState, requestAdminRefund, saveAdminState } from '../../services/api';
 import { firebaseAuth, firebaseConfigured, observeFirebaseUser, signInWithGoogle, signOutFirebase } from '../../services/firebaseAuth';
 import {
   Product,
@@ -235,6 +235,8 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
   const [refundModalOrder, setRefundModalOrder] = useState<Order | null>(null);
   const [refundAmount, setRefundAmount] = useState<number>(0);
   const [refundReason, setRefundReason] = useState<string>('Customer RMA return accepted / passed diagnostic');
+  const [refundError, setRefundError] = useState<string>('');
+  const [isRefundSubmitting, setIsRefundSubmitting] = useState<boolean>(false);
 
   const [showNotificationsModal, setShowNotificationsModal] = useState<boolean>(false);
 
@@ -383,10 +385,25 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
   };
 
   // Refund Submit (REQ-ORD-003)
-  const handleConfirmRefund = () => {
+  const handleConfirmRefund = async () => {
     if (!refundModalOrder) return;
-    db.processRefund(refundModalOrder.id, Number(refundAmount), refundReason);
-    setRefundModalOrder(null);
+    const user = firebaseAuth?.currentUser;
+    if (!user) {
+      setRefundError('Your admin session expired. Sign in again before refunding.');
+      return;
+    }
+    setRefundError('');
+    setIsRefundSubmitting(true);
+    try {
+      await requestAdminRefund(user, refundModalOrder.id, Number(refundAmount), refundReason);
+      const snapshot = await loadAdminState(user);
+      if (snapshot) db.importSnapshot(snapshot);
+      setRefundModalOrder(null);
+    } catch (error) {
+      setRefundError(error instanceof Error ? error.message : 'Unable to process refund.');
+    } finally {
+      setIsRefundSubmitting(false);
+    }
   };
 
   // Create Coupon (REQ-PRM-001)
@@ -1551,11 +1568,12 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
                                   Deliver
                                 </button>
                               )}
-                              {o.orderStatus !== 'Cancelled' && (
+                              {o.paymentMethod === 'Card' && o.paymentStatus === 'Paid' && (o.refundAmount ?? 0) < o.total && (
                                 <button
                                   onClick={() => {
+                                    setRefundError('');
                                     setRefundModalOrder(o);
-                                    setRefundAmount(o.total);
+                                    setRefundAmount(Number((o.total - (o.refundAmount ?? 0)).toFixed(2)));
                                   }}
                                   className="px-2 py-1 bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 text-[11px] font-semibold rounded cursor-pointer"
                                   title="Process Refund (REQ-ORD-003)"
@@ -2155,6 +2173,10 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
                 <span>Paid Total:</span>
                 <span className="font-mono font-bold">${refundModalOrder.total.toFixed(2)}</span>
               </div>
+              <div className="flex justify-between">
+                <span>Remaining refundable:</span>
+                <span className="font-mono font-bold">${(refundModalOrder.total - (refundModalOrder.refundAmount ?? 0)).toFixed(2)}</span>
+              </div>
             </div>
 
             <div className="space-y-3">
@@ -2162,7 +2184,9 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
                 <label className="block text-xs font-medium text-[#666B62] mb-1">Refund Amount ($)</label>
                 <input
                   type="number"
-                  max={refundModalOrder.total}
+                  min="0.01"
+                  max={refundModalOrder.total - (refundModalOrder.refundAmount ?? 0)}
+                  step="0.01"
                   value={refundAmount}
                   onChange={(e) => setRefundAmount(Number(e.target.value))}
                   className="w-full px-3 py-2 text-xs rounded border border-[#E4E1D6] bg-white font-mono font-bold text-red-600"
@@ -2180,15 +2204,18 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
               </div>
             </div>
 
+            {refundError && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-3" role="alert">{refundError}</p>}
+
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setRefundModalOrder(null)} className="px-4 py-2 text-xs text-[#666B62]">
                 Cancel
               </button>
               <button
                 onClick={handleConfirmRefund}
-                className="px-5 py-2 bg-purple-700 hover:bg-purple-800 text-white text-xs font-semibold rounded-lg"
+                disabled={isRefundSubmitting || refundAmount <= 0 || refundAmount > refundModalOrder.total - (refundModalOrder.refundAmount ?? 0)}
+                className="px-5 py-2 bg-purple-700 hover:bg-purple-800 disabled:opacity-50 text-white text-xs font-semibold rounded-lg"
               >
-                Execute Refund
+                {isRefundSubmitting ? 'Processing...' : 'Execute Refund'}
               </button>
             </div>
           </div>

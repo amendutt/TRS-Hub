@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Product, Order, LogoConfig, StaticPage, ProductReview } from '../../types/logo';
+import { Product, Order, LogoConfig, StaticPage, ProductReview, CustomerAddress } from '../../types/logo';
 import { db } from '../../services/mysqlMockDb';
-import { confirmStripePayment, createCheckout, loadAccountProfile, loadCustomerOrders } from '../../services/api';
+import { confirmStripePayment, createCheckout, loadAccountProfile, loadCustomerOrders, saveAccountProfile } from '../../services/api';
 import {
   firebaseAuth,
   firebaseConfigured,
@@ -68,17 +68,6 @@ export const Storefront: React.FC<StorefrontProps> = ({
   const [wishlist, setWishlist] = useState<Product[]>([]);
   const [isWishlistOpen, setIsWishlistOpen] = useState<boolean>(false);
 
-  const toggleWishlist = (product: Product) => {
-    setWishlist(prev => {
-      const exists = prev.some(p => p.id === product.id);
-      if (exists) {
-        return prev.filter(p => p.id !== product.id);
-      } else {
-        return [...prev, product];
-      }
-    });
-  };
-
   // Customer Account & Authentication state (REQ-USR-001..004)
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'otp' | 'forgot_password'>('login');
@@ -96,8 +85,14 @@ export const Storefront: React.FC<StorefrontProps> = ({
   const [isCheckoutLoading, setIsCheckoutLoading] = useState<boolean>(false);
   const [checkoutError, setCheckoutError] = useState<string>('');
   const [otpNotificationMessage, setOtpNotificationMessage] = useState<string>('');
-  const [savedAddresses] = useState<Array<{ id: string; label: string; firstName: string; lastName: string; address: string; city: string; pincode: string }>>([]);
+  const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string>('');
+  const [isAddressFormOpen, setIsAddressFormOpen] = useState<boolean>(false);
+  const [isProfileSaving, setIsProfileSaving] = useState<boolean>(false);
+  const [profileError, setProfileError] = useState<string>('');
+  const [addressDraft, setAddressDraft] = useState({
+    label: 'Home', firstName: '', lastName: '', address: '', city: '', pincode: '', phone: ''
+  });
 
   useEffect(() => observeFirebaseUser(user => {
     setCustomerUser(user);
@@ -105,13 +100,81 @@ export const Storefront: React.FC<StorefrontProps> = ({
     setCustomerName(user?.displayName || user?.phoneNumber || user?.email || '');
     setAuthEmail(user?.email ?? '');
     setAuthPhone(user?.phoneNumber ?? '');
+    setSavedAddresses([]);
+    setSelectedAddressId('');
+    setWishlist([]);
     if (user) {
-      void loadAccountProfile(user).catch(() => undefined);
+      void loadAccountProfile(user).then(profile => {
+        setSavedAddresses(profile.savedAddresses ?? []);
+        setWishlist(products.filter(product => profile.wishlist.includes(product.id)));
+        setSelectedAddressId(profile.savedAddresses.find(address => address.isDefault)?.id ?? '');
+      }).catch(error => setProfileError(error instanceof Error ? error.message : 'Unable to load your saved profile.'));
       void loadCustomerOrders(user).then(setCustomerOrders).catch(() => setCustomerOrders([]));
     } else {
       setCustomerOrders([]);
     }
   }), []);
+
+  const persistCustomerProfile = async (addresses: CustomerAddress[], wishlistProducts: Product[] = wishlist): Promise<boolean> => {
+    if (!customerUser) return false;
+    setIsProfileSaving(true);
+    setProfileError('');
+    try {
+      const savedProfile = await saveAccountProfile(customerUser, {
+        savedAddresses: addresses,
+        wishlist: wishlistProducts.map(product => product.id)
+      });
+      setSavedAddresses(savedProfile.savedAddresses);
+      setWishlist(products.filter(product => savedProfile.wishlist.includes(product.id)));
+      return true;
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : 'Unable to save your profile.');
+      return false;
+    } finally {
+      setIsProfileSaving(false);
+    }
+  };
+
+  const toggleWishlist = (product: Product) => {
+    if (!customerUser) {
+      setAuthMode('login');
+      setShowAuthModal(true);
+      return;
+    }
+    const nextWishlist = wishlist.some(item => item.id === product.id)
+      ? wishlist.filter(item => item.id !== product.id)
+      : [...wishlist, product];
+    void persistCustomerProfile(savedAddresses, nextWishlist);
+  };
+
+  const handleSaveAddress = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const address: CustomerAddress = {
+      ...addressDraft,
+      id: crypto.randomUUID(),
+      isDefault: savedAddresses.length === 0
+    };
+    if (await persistCustomerProfile([...savedAddresses, address])) {
+      setSelectedAddressId(address.isDefault ? address.id : selectedAddressId);
+      setAddressDraft({ label: 'Home', firstName: '', lastName: '', address: '', city: '', pincode: '', phone: '' });
+      setIsAddressFormOpen(false);
+    }
+  };
+
+  const handleSetDefaultAddress = async (addressId: string) => {
+    const nextAddresses = savedAddresses.map(address => ({ ...address, isDefault: address.id === addressId }));
+    if (await persistCustomerProfile(nextAddresses)) setSelectedAddressId(addressId);
+  };
+
+  const handleRemoveAddress = async (addressId: string) => {
+    const nextAddresses = savedAddresses.filter(address => address.id !== addressId);
+    if (nextAddresses.length && !nextAddresses.some(address => address.isDefault)) {
+      nextAddresses[0] = { ...nextAddresses[0], isDefault: true };
+    }
+    if (await persistCustomerProfile(nextAddresses)) {
+      setSelectedAddressId(nextAddresses.find(address => address.isDefault)?.id ?? '');
+    }
+  };
 
   // Static Content Pages Modal (REQ-PRM-003)
   const [showStaticModal, setShowStaticModal] = useState<boolean>(false);
@@ -196,6 +259,19 @@ export const Storefront: React.FC<StorefrontProps> = ({
     paymentMethod: 'Card' as 'Card' | 'Cash on Delivery'
   });
   const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
+
+  useEffect(() => {
+    const address = savedAddresses.find(item => item.id === selectedAddressId);
+    if (!address) return;
+    setCheckoutData(current => ({
+      ...current,
+      firstName: address.firstName,
+      lastName: address.lastName,
+      address: address.address,
+      city: address.city,
+      pincode: address.pincode
+    }));
+  }, [savedAddresses, selectedAddressId]);
 
   useEffect(() => {
     const query = new URLSearchParams(window.location.search);
@@ -1977,8 +2053,34 @@ export const Storefront: React.FC<StorefrontProps> = ({
                     <h4 className="font-serif text-sm font-bold text-[#20241F]">
                       Manage Shipping Addresses (REQ-USR-003)
                     </h4>
-                    <span className="text-[11px] text-[#0F5257] font-semibold">{savedAddresses.length} Addresses Saved</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-[11px] text-[#0F5257] font-semibold">{savedAddresses.length} Addresses Saved</span>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddressFormOpen(value => !value)}
+                        className="text-[11px] font-semibold text-[#0F5257] hover:underline"
+                      >
+                        {isAddressFormOpen ? 'Cancel' : 'Add address'}
+                      </button>
+                    </div>
                   </div>
+
+                  {profileError && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-2" role="alert">{profileError}</p>}
+
+                  {isAddressFormOpen && (
+                    <form onSubmit={handleSaveAddress} className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 border border-[#E4E1D6] rounded-lg bg-[#FAF8F3]">
+                      <input aria-label="Address label" placeholder="Label (Home, Work)" value={addressDraft.label} onChange={event => setAddressDraft({ ...addressDraft, label: event.target.value })} required maxLength={80} className="px-3 py-2 text-xs rounded border border-[#E4E1D6] bg-white" />
+                      <input aria-label="Phone number" type="tel" placeholder="Phone number" value={addressDraft.phone} onChange={event => setAddressDraft({ ...addressDraft, phone: event.target.value })} required maxLength={32} className="px-3 py-2 text-xs rounded border border-[#E4E1D6] bg-white" />
+                      <input aria-label="First name" placeholder="First name" value={addressDraft.firstName} onChange={event => setAddressDraft({ ...addressDraft, firstName: event.target.value })} required maxLength={100} className="px-3 py-2 text-xs rounded border border-[#E4E1D6] bg-white" />
+                      <input aria-label="Last name" placeholder="Last name" value={addressDraft.lastName} onChange={event => setAddressDraft({ ...addressDraft, lastName: event.target.value })} required maxLength={100} className="px-3 py-2 text-xs rounded border border-[#E4E1D6] bg-white" />
+                      <input aria-label="Street address" placeholder="Street address" value={addressDraft.address} onChange={event => setAddressDraft({ ...addressDraft, address: event.target.value })} required maxLength={300} className="sm:col-span-2 px-3 py-2 text-xs rounded border border-[#E4E1D6] bg-white" />
+                      <input aria-label="City" placeholder="City" value={addressDraft.city} onChange={event => setAddressDraft({ ...addressDraft, city: event.target.value })} required maxLength={120} className="px-3 py-2 text-xs rounded border border-[#E4E1D6] bg-white" />
+                      <input aria-label="ZIP or postal code" placeholder="ZIP / postal code" value={addressDraft.pincode} onChange={event => setAddressDraft({ ...addressDraft, pincode: event.target.value })} required minLength={2} maxLength={20} className="px-3 py-2 text-xs rounded border border-[#E4E1D6] bg-white" />
+                      <button type="submit" disabled={isProfileSaving} className="sm:col-span-2 py-2 bg-[#0F5257] text-white text-xs font-semibold rounded disabled:opacity-50">
+                        {isProfileSaving ? 'Saving...' : 'Save address'}
+                      </button>
+                    </form>
+                  )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {savedAddresses.length === 0 && (
@@ -1997,14 +2099,26 @@ export const Storefront: React.FC<StorefrontProps> = ({
                         <p className="text-[#666B62] leading-tight">
                           {addr.firstName} {addr.lastName}<br />
                           {addr.address}<br />
-                          {addr.city}, {addr.pincode}
+                          {addr.city}, {addr.pincode}<br />
+                          {addr.phone}
                         </p>
                         <div className="pt-1 flex gap-2">
                           <button
-                            onClick={() => setSelectedAddressId(addr.id)}
+                            disabled={isProfileSaving}
+                            onClick={() => handleSetDefaultAddress(addr.id)}
                             className="text-[11px] text-[#0F5257] font-semibold hover:underline cursor-pointer"
                           >
                             Set as Default
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isProfileSaving}
+                            aria-label={`Delete ${addr.label} address`}
+                            title={`Delete ${addr.label} address`}
+                            onClick={() => handleRemoveAddress(addr.id)}
+                            className="text-[11px] text-red-700 hover:underline cursor-pointer disabled:opacity-50"
+                          >
+                            Remove
                           </button>
                         </div>
                       </div>
