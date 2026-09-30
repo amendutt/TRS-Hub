@@ -1,4 +1,4 @@
-# TRS Hub
+# TRS Hub 2
 
 TRS Hub is a React storefront served by an Express API. The API stores store configuration and orders in MySQL, verifies Firebase identities, and creates Stripe Checkout sessions. Payment is confirmed by a signed Stripe webhook and server-side session verification.
 
