@@ -1230,7 +1230,7 @@ export const INITIAL_STAFF: AdminStaff[] = [
   {
     id: 'stf_01',
     name: 'Abdullah Khan',
-    email: 'admin@techrefresh.com',
+    email: 'abdullahkhan9305@gmail.com',
     role: 'Super Admin',
     permissions: ['all_permissions', 'manage_catalog', 'manage_orders', 'manage_categories', 'logo_governance', 'audit_logs', 'system_settings'],
     lastActive: 'Just now'

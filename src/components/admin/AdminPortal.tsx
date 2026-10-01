@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../services/mysqlMockDb';
-import { loadAccountProfile, loadAdminState, requestAdminRefund, saveAdminState } from '../../services/api';
-import { firebaseAuth, firebaseConfigured, observeFirebaseUser, signInWithGoogle, signOutFirebase } from '../../services/firebaseAuth';
+import { createAdminEmployee, deactivateAdminEmployee, loadAccountProfile, loadAdminEmployees, loadAdminState, requestAdminRefund, saveAdminState, updateAdminEmployee } from '../../services/api';
+import type { AdminEmployee, AdminPermission, EmployeeRole } from '../../services/api';
+import { getAuthSession, observeAuthSession, signInWithEmail, signOut } from '../../services/auth';
 import {
   Product,
   Order,
@@ -9,7 +10,6 @@ import {
   CategoryAttribute,
   ProductVariant,
   ProductReview,
-  AdminStaff,
   AdminAuditLogEntry,
   SystemNotification,
   Coupon,
@@ -17,10 +17,8 @@ import {
   HomepageBanner
 } from '../../types/logo';
 import logoImage from '../../assets/images/logo.png.png';
-import { LogoTechnicalRefreshStudio } from '../logo/LogoTechnicalRefreshStudio';
 import {
   LayoutDashboard,
-  Sparkles,
   ShoppingBag,
   Package,
   Users,
@@ -60,17 +58,51 @@ import {
 
 interface AdminPortalProps {
   onBackToStorefront: () => void;
-  initialTab?: 'dashboard' | 'logo_studio' | 'catalog' | 'categories' | 'orders' | 'reviews' | 'customers' | 'marketing' | 'reports' | 'audit_logs' | 'settings';
+  initialTab?: 'dashboard' | 'catalog' | 'categories' | 'orders' | 'reviews' | 'customers' | 'marketing' | 'reports' | 'audit_logs' | 'settings' | 'employees';
 }
+
+const employeeModules: Array<{ id: AdminPermission; label: string }> = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'catalog', label: 'Catalog and categories' },
+  { id: 'inventory', label: 'Inventory' },
+  { id: 'orders', label: 'Orders and fulfillment' },
+  { id: 'customers', label: 'Customers' },
+  { id: 'reviews', label: 'Reviews' },
+  { id: 'marketing', label: 'Marketing and content' },
+  { id: 'reports', label: 'Reports' },
+  { id: 'settings', label: 'Settings' },
+  { id: 'audit_logs', label: 'Audit logs' }
+];
+
+const rolePermissionDefaults: Record<EmployeeRole, AdminPermission[]> = {
+  'Catalog Manager': ['dashboard', 'catalog', 'inventory', 'reports'],
+  'Order Fulfillment': ['dashboard', 'orders', 'customers', 'inventory'],
+  'Customer Support': ['dashboard', 'orders', 'customers', 'reviews']
+};
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({
   onBackToStorefront,
   initialTab = 'dashboard'
 }) => {
-  const [activeNav, setActiveNav] = useState<'dashboard' | 'logo_studio' | 'catalog' | 'categories' | 'orders' | 'reviews' | 'customers' | 'marketing' | 'reports' | 'audit_logs' | 'settings'>(initialTab);
+  const [activeNav, setActiveNav] = useState<'dashboard' | 'catalog' | 'categories' | 'orders' | 'reviews' | 'customers' | 'marketing' | 'reports' | 'audit_logs' | 'settings' | 'employees'>(initialTab);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [isCheckingAuthorization, setIsCheckingAuthorization] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string>('');
+  const [adminRole, setAdminRole] = useState<string>('');
+  const [adminPermissions, setAdminPermissions] = useState<string[]>([]);
+  const [isRootAdmin, setIsRootAdmin] = useState<boolean>(false);
+  const [employees, setEmployees] = useState<AdminEmployee[]>([]);
+  const [employeeError, setEmployeeError] = useState<string>('');
+  const [employeeName, setEmployeeName] = useState<string>('');
+  const [employeeEmail, setEmployeeEmail] = useState<string>('');
+  const [employeeRole, setEmployeeRole] = useState<EmployeeRole>('Catalog Manager');
+  const [employeePermissions, setEmployeePermissions] = useState<AdminPermission[]>(['dashboard', 'catalog', 'inventory']);
+  const [employeePassword, setEmployeePassword] = useState<string>('');
+  const [editingEmployeeId, setEditingEmployeeId] = useState<string | null>(null);
+  const [isEmployeeSaving, setIsEmployeeSaving] = useState<boolean>(false);
+  const [adminEmail, setAdminEmail] = useState<string>('');
+  const [adminPassword, setAdminPassword] = useState<string>('');
+  const [isAdminAuthLoading, setIsAdminAuthLoading] = useState<boolean>(false);
 
   // Synced Live State from MySQL Mock DB
   const [products, setProducts] = useState<Product[]>(db.getProducts());
@@ -79,8 +111,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [customers] = useState(db.getCustomers());
   const [coupons, setCoupons] = useState<Coupon[]>(db.getCoupons());
   const [reviews, setReviews] = useState<ProductReview[]>(db.getAllReviews());
-  const [staff, setStaff] = useState<AdminStaff[]>(db.getStaffMembers());
-  const [currentStaff, setCurrentStaff] = useState<AdminStaff>(db.getCurrentStaff());
   const [auditLogs, setAuditLogs] = useState<AdminAuditLogEntry[]>(db.getAdminAuditLogs());
   const [notifications, setNotifications] = useState<SystemNotification[]>(db.getNotifications());
   const [banners, setBanners] = useState<HomepageBanner[]>(db.getBanners());
@@ -94,8 +124,6 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       setOrders(db.getOrders());
       setCoupons(db.getCoupons());
       setReviews(db.getAllReviews());
-      setStaff(db.getStaffMembers());
-      setCurrentStaff(db.getCurrentStaff());
       setAuditLogs(db.getAdminAuditLogs());
       setNotifications(db.getNotifications());
       setBanners(db.getBanners());
@@ -106,9 +134,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
 
   useEffect(() => {
     let isMounted = true;
-    const unsubscribe = observeFirebaseUser(user => {
+    const unsubscribe = observeAuthSession(session => {
       void (async () => {
-        if (!user) {
+        if (!session) {
           if (isMounted) {
             setIsLoggedIn(false);
             setIsCheckingAuthorization(false);
@@ -117,18 +145,30 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
         }
 
         try {
-          const profile = await loadAccountProfile(user);
+          const profile = await loadAccountProfile(session);
           if (!profile.isAdmin) {
-            if (isMounted) setAuthError('This Google account is not authorized for the admin portal.');
+            if (isMounted) setAuthError('This account is not authorized for the admin portal.');
             if (isMounted) setIsLoggedIn(false);
+            await signOut();
             return;
           }
 
-          const snapshot = await loadAdminState(user);
+          if (isMounted) {
+            setAdminRole(profile.adminRole ?? 'Admin');
+            setAdminPermissions(profile.adminPermissions ?? []);
+            setIsRootAdmin(profile.isRootAdmin);
+          }
+
+          if (profile.isRootAdmin) {
+            const managedEmployees = await loadAdminEmployees(session);
+            if (isMounted) setEmployees(managedEmployees);
+          }
+
+          const snapshot = await loadAdminState(session);
           if (snapshot) {
             db.importSnapshot(snapshot);
           } else {
-            await saveAdminState(user, db.exportSnapshot());
+            await saveAdminState(session, db.exportSnapshot());
           }
           if (isMounted) {
             setAuthError('');
@@ -151,14 +191,34 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   }, []);
 
   useEffect(() => {
-    const user = firebaseAuth?.currentUser;
-    if (!isLoggedIn || !user) return;
+    const revalidateAccess = () => {
+      const session = getAuthSession();
+      if (!session) return;
+      void loadAccountProfile(session).then(profile => {
+        if (!profile.isAdmin) {
+          setAuthError('Admin access has been removed for this account.');
+          setIsLoggedIn(false);
+          void signOut();
+          return;
+        }
+        setAdminRole(profile.adminRole ?? 'Admin');
+        setAdminPermissions(profile.adminPermissions ?? []);
+        setIsRootAdmin(profile.isRootAdmin);
+      }).catch(() => undefined);
+    };
+    window.addEventListener('focus', revalidateAccess);
+    return () => window.removeEventListener('focus', revalidateAccess);
+  }, []);
+
+  useEffect(() => {
+    const session = getAuthSession();
+    if (!isLoggedIn || !session) return;
 
     let timer: ReturnType<typeof setTimeout>;
     const unsubscribe = db.subscribe(() => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        void saveAdminState(user, db.exportSnapshot()).catch(error => {
+        void saveAdminState(session, db.exportSnapshot()).catch(error => {
           setAuthError(error instanceof Error ? error.message : 'Unable to save admin changes.');
         });
       }, 500);
@@ -168,6 +228,14 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
       unsubscribe();
     };
   }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (!isLoggedIn || isRootAdmin) return;
+    const activePermission = activeNav === 'categories' ? 'catalog' : activeNav;
+    if (activeNav === 'employees' || !adminPermissions.includes(activePermission)) {
+      setActiveNav((adminPermissions[0] ?? 'dashboard') as typeof activeNav);
+    }
+  }, [isLoggedIn, isRootAdmin, adminPermissions, activeNav]);
 
   const activeLogo = db.getActiveVersion();
   const lowStockProducts = db.getLowStockAlerts();
@@ -202,6 +270,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [newProductSeoDesc, setNewProductSeoDesc] = useState<string>('');
   const [newProductUrlSlug, setNewProductUrlSlug] = useState<string>('');
   const [newProductImage, setNewProductImage] = useState<string>('/src/assets/images/havn_wireless_charger_1790578580677.jpg');
+  const [newProductImageError, setNewProductImageError] = useState<string>('');
   const [productSearch, setProductSearch] = useState<string>('');
 
   // Configurable Variants state for Add Product
@@ -308,6 +377,30 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
     setNewProductDesc('');
   };
 
+  const handleProductImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setNewProductImageError('Choose a JPG, PNG, or WebP image.');
+      return;
+    }
+    if (file.size > 1024 * 1024) {
+      setNewProductImageError('Image must be 1 MB or smaller.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setNewProductImage(reader.result);
+        setNewProductImageError('');
+      }
+    };
+    reader.onerror = () => setNewProductImageError('This image could not be read. Please choose another file.');
+    reader.readAsDataURL(file);
+  };
+
   // Category & Dynamic Attribute Handlers (REQ-CAT-001..004)
   const handleCreateCategory = (e: React.FormEvent) => {
     e.preventDefault();
@@ -387,7 +480,7 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
   // Refund Submit (REQ-ORD-003)
   const handleConfirmRefund = async () => {
     if (!refundModalOrder) return;
-    const user = firebaseAuth?.currentUser;
+    const user = getAuthSession();
     if (!user) {
       setRefundError('Your admin session expired. Sign in again before refunding.');
       return;
@@ -403,6 +496,81 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
       setRefundError(error instanceof Error ? error.message : 'Unable to process refund.');
     } finally {
       setIsRefundSubmitting(false);
+    }
+  };
+
+  const handleSaveEmployee = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const user = getAuthSession();
+    if (!user || !isRootAdmin) {
+      setEmployeeError('Only a signed-in Super Admin can manage employee accounts.');
+      return;
+    }
+    setEmployeeError('');
+    setIsEmployeeSaving(true);
+    try {
+      if (editingEmployeeId) {
+        await updateAdminEmployee(user, {
+          id: editingEmployeeId,
+          name: employeeName,
+          role: employeeRole,
+          permissions: employeePermissions
+        });
+      } else {
+        const createdEmployee = await createAdminEmployee(user, {
+          name: employeeName,
+          email: employeeEmail,
+          role: employeeRole,
+          permissions: employeePermissions,
+          password: employeePassword
+        });
+        setEmployees(previous => [createdEmployee, ...previous]);
+      }
+      if (editingEmployeeId) setEmployees(await loadAdminEmployees(user));
+      setEditingEmployeeId(null);
+      setEmployeeName('');
+      setEmployeeEmail('');
+      setEmployeePassword('');
+      setEmployeePermissions(rolePermissionDefaults['Catalog Manager']);
+    } catch (error) {
+      setEmployeeError(error instanceof Error ? error.message : 'Unable to save employee access.');
+    } finally {
+      setIsEmployeeSaving(false);
+    }
+  };
+
+  const handleEditEmployee = (employee: AdminEmployee) => {
+    setEditingEmployeeId(employee.id);
+    setEmployeeName(employee.name);
+    setEmployeeEmail(employee.email);
+    setEmployeeRole(employee.role);
+    setEmployeePermissions(employee.permissions);
+    setEmployeePassword('');
+    setEmployeeError('');
+  };
+
+  const handleDeactivateEmployee = async (employee: AdminEmployee) => {
+    const user = getAuthSession();
+    if (!user || !isRootAdmin) return;
+    setEmployeeError('');
+    try {
+      await deactivateAdminEmployee(user, employee.id);
+      setEmployees(previous => previous.map(item => item.id === employee.id ? { ...item, active: false } : item));
+    } catch (error) {
+      setEmployeeError(error instanceof Error ? error.message : 'Unable to deactivate employee.');
+    }
+  };
+
+  const handleAdminEmailSignIn = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setAuthError('');
+    setIsAdminAuthLoading(true);
+    try {
+      await signInWithEmail(adminEmail, adminPassword);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Email sign-in failed.');
+    } finally {
+      setIsAdminAuthLoading(false);
     }
   };
 
@@ -456,31 +624,49 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
             <div className="space-y-3">
               <h2 className="font-serif text-2xl font-bold">{activeLogo.config.brandName} Back-Office</h2>
               <p className="text-xs text-[#B0C6C3] leading-relaxed">
-                Enterprise control portal for multi-category dynamic catalog, order fulfillment, and the Logo Technical Refresh engine.
+                Enterprise control portal for merchandising, order fulfillment, and customer operations.
               </p>
             </div>
             <div className="text-[11px] text-[#A4BFBC]">
-              Powered by MySQL 8.0 &amp; TRS Governance Engine
+              Powered by MySQL 8.0 &amp; secure admin access
             </div>
           </div>
 
           <div className="p-10 flex flex-col justify-center space-y-6">
             <div>
               <h3 className="font-serif text-2xl font-bold text-[#20241F]">Log in to Admin</h3>
-              <p className="text-xs text-[#666B62]">Use an authorized Google account to access back-office modules.</p>
+              <p className="text-xs text-[#666B62]">Sign in with an authorized account.</p>
             </div>
 
             <div className="space-y-4">
               {authError && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">{authError}</p>}
-              {!firebaseConfigured && <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">Set your Firebase web app values in `.env.local` (see README.md), then restart `npm run dev`.</p>}
-              <button
-                type="button"
-                onClick={() => { void signInWithGoogle().catch(error => setAuthError(error instanceof Error ? error.message : 'Google sign-in failed.')); }}
-                disabled={!firebaseConfigured}
-                className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition-all shadow-sm cursor-pointer disabled:cursor-not-allowed"
-              >
-                Continue with Google
-              </button>
+              <p className="text-[11px] text-[#666B62]">Sign in with the Super Admin or employee account created in the database.</p>
+              {authError && <p role="alert" className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">{authError}</p>}
+              <form onSubmit={handleAdminEmailSignIn} className="space-y-3">
+                <input
+                  type="email"
+                  autoComplete="username"
+                  value={adminEmail}
+                  onChange={event => setAdminEmail(event.target.value)}
+                  placeholder="Admin email"
+                  aria-label="Admin email"
+                  required
+                  className="w-full px-3.5 py-2 text-sm rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]"
+                />
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={adminPassword}
+                  onChange={event => setAdminPassword(event.target.value)}
+                  placeholder="Password"
+                  aria-label="Admin password"
+                  required
+                  className="w-full px-3.5 py-2 text-sm rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]"
+                />
+                <button type="submit" disabled={isAdminAuthLoading} className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] disabled:opacity-50 text-white rounded-lg text-sm font-semibold disabled:cursor-not-allowed">
+                  {isAdminAuthLoading ? 'Signing in...' : 'Sign in'}
+                </button>
+              </form>
             </div>
           </div>
         </div>
@@ -507,7 +693,6 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
           <nav className="space-y-1">
             {[
               { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-              { id: 'logo_studio', label: 'Logo Refresh Studio', icon: Sparkles, highlight: true },
               { id: 'catalog', label: 'Dynamic Catalog', icon: Package, count: products.length },
               { id: 'categories', label: 'Categories & Attributes', icon: FolderTree, count: categories.length },
               { id: 'orders', label: 'Orders & Fulfillment', icon: ShoppingBag, count: orders.length },
@@ -516,8 +701,9 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
               { id: 'marketing', label: 'Marketing & Content', icon: Tag },
               { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
               { id: 'audit_logs', label: 'Audit Logs & RBAC', icon: ShieldCheck },
-              { id: 'settings', label: 'Settings', icon: Settings }
-            ].map(item => {
+              { id: 'settings', label: 'Settings', icon: Settings },
+              { id: 'employees', label: 'Employee Access', icon: Users }
+            ].filter(item => item.id === 'employees' ? isRootAdmin : isRootAdmin || adminPermissions.includes(item.id) || (item.id === 'categories' && adminPermissions.includes('catalog'))).map(item => {
               const Icon = item.icon;
               const isActive = activeNav === item.id;
 
@@ -532,16 +718,13 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
                   }`}
                 >
                   <div className="flex items-center gap-2.5">
-                    <Icon className={`w-4 h-4 ${item.highlight ? 'text-[#48B065]' : ''}`} />
+                    <Icon className="w-4 h-4" />
                     <span>{item.label}</span>
                   </div>
                   {item.count !== undefined && (
                     <span className="px-1.5 py-0.2 text-[10px] rounded bg-white/20 text-white font-mono">
                       {item.count}
                     </span>
-                  )}
-                  {item.highlight && !isActive && (
-                    <span className="w-2 h-2 rounded-full bg-[#48B065] animate-pulse"></span>
                   )}
                 </button>
               );
@@ -573,7 +756,7 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
             <span>View Public Storefront</span>
           </button>
           <button
-            onClick={() => { void signOutFirebase(); setIsLoggedIn(false); }}
+            onClick={() => { void signOut(); setIsLoggedIn(false); }}
             className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-red-300 hover:bg-red-900/30 transition-colors cursor-pointer"
           >
             <LogOut className="w-3.5 h-3.5" />
@@ -591,26 +774,15 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
               {activeNav.replace('_', ' ')}
             </h2>
             <span className="hidden sm:inline-flex text-[11px] font-semibold text-[#0F5257] bg-[#EAF1F0] px-2.5 py-0.5 rounded-full border border-[#0F5257]/20">
-              MySQL Relational Engine
+              Secure admin console
             </span>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* RBAC Quick Role Switcher (REQ-ADM-001) */}
+            {/* Server-authorized employee role */}
             <div className="flex items-center gap-1.5 bg-[#F7F5EF] px-2.5 py-1 rounded-lg border border-[#E4E1D6]">
               <ShieldCheck className="w-3.5 h-3.5 text-[#0F5257]" />
-              <span className="text-[11px] text-[#666B62] hidden lg:inline">Role:</span>
-              <select
-                value={currentStaff.id}
-                onChange={(e) => db.setCurrentStaff(e.target.value)}
-                className="text-xs font-semibold text-[#0F5257] bg-transparent focus:outline-none cursor-pointer"
-              >
-                {staff.map(s => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.role})
-                  </option>
-                ))}
-              </select>
+              <span className="text-xs font-semibold text-[#0F5257]">{adminRole}</span>
             </div>
 
             {/* Notification logs drawer button (REQ-ORD-004) */}
@@ -635,11 +807,6 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
 
         {/* View Routing */}
         <main className="flex-1 p-6 md:p-8 max-w-7xl w-full mx-auto space-y-6">
-          {/* TAB: LOGO TECHNICAL REFRESH STUDIO */}
-          {activeNav === 'logo_studio' && (
-            <LogoTechnicalRefreshStudio />
-          )}
-
           {/* TAB: DASHBOARD */}
           {activeNav === 'dashboard' && (
             <div className="space-y-6">
@@ -962,14 +1129,38 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
                               <option value="Zero Rated (0%)">Zero Rated (0%)</option>
                             </select>
                           </div>
-                          <div>
-                            <label className="block text-xs font-medium text-[#666B62] mb-1">Primary Image URL</label>
+                          <div className="space-y-2">
+                            <span className="block text-xs font-medium text-[#666B62]">Primary Product Image</span>
+                            <div className="flex items-center gap-3">
+                              <img
+                                src={newProductImage}
+                                alt="Product image preview"
+                                className="w-16 h-16 rounded-md border border-[#E4E1D6] bg-[#F7F5EF] object-contain"
+                              />
+                              <label className="inline-flex items-center gap-2 px-3 py-2 border border-[#DCE7E5] rounded-md bg-white text-xs font-semibold text-[#0B6268] hover:bg-[#F3F7F6] cursor-pointer">
+                                <Upload className="w-4 h-4" />
+                                Upload image
+                                <input
+                                  type="file"
+                                  accept="image/jpeg,image/png,image/webp"
+                                  onChange={handleProductImageUpload}
+                                  className="sr-only"
+                                />
+                              </label>
+                            </div>
                             <input
-                              type="text"
-                              value={newProductImage}
-                              onChange={(e) => setNewProductImage(e.target.value)}
+                              type="url"
+                              value={newProductImage.startsWith('data:') ? '' : newProductImage}
+                              onChange={(event) => {
+                                setNewProductImage(event.target.value);
+                                setNewProductImageError('');
+                              }}
+                              placeholder="Or paste an image URL"
+                              aria-label="Product image URL"
                               className="w-full px-3 py-2 text-xs rounded-lg border border-[#E4E1D6] bg-white text-[11px]"
                             />
+                            <p className="text-[10px] text-[#666B62]">JPG, PNG, or WebP. Maximum file size: 1 MB.</p>
+                            {newProductImageError && <p className="text-[11px] text-red-700" role="alert">{newProductImageError}</p>}
                           </div>
                         </div>
 
@@ -1676,45 +1867,84 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
             </div>
           )}
 
-          {/* TAB: AUDIT LOGS & STAFF RBAC (REQ-ADM-001 & REQ-ADM-002) */}
+          {activeNav === 'employees' && isRootAdmin && (
+            <div className="space-y-6">
+              <section className="bg-white rounded-xl p-6 border border-[#E4E1D6] space-y-5">
+                <div className="border-b border-[#E4E1D6] pb-3">
+                  <h3 className="font-serif text-lg font-semibold text-[#20241F]">Employee access</h3>
+                  <p className="text-xs text-[#666B62]">Create database accounts and grant only the modules each employee needs.</p>
+                </div>
+
+                {employeeError && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg p-3" role="alert">{employeeError}</p>}
+
+                <form onSubmit={handleSaveEmployee} className="space-y-4 p-4 border border-[#E4E1D6] rounded-lg bg-[#FAF8F3]">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-[#20241F]">{editingEmployeeId ? 'Edit employee access' : 'Add an employee'}</h4>
+                    {editingEmployeeId && <button type="button" onClick={() => { setEditingEmployeeId(null); setEmployeeName(''); setEmployeeEmail(''); setEmployeePassword(''); setEmployeePermissions(rolePermissionDefaults['Catalog Manager']); }} className="text-xs text-[#0F5257] hover:underline">Cancel edit</button>}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <input value={employeeName} onChange={event => setEmployeeName(event.target.value)} placeholder="Employee name" aria-label="Employee name" required maxLength={160} className="px-3 py-2 text-xs border border-[#E4E1D6] rounded bg-white" />
+                    <input type="email" value={employeeEmail} onChange={event => setEmployeeEmail(event.target.value)} placeholder="Employee email" aria-label="Employee email" required disabled={Boolean(editingEmployeeId)} className="px-3 py-2 text-xs border border-[#E4E1D6] rounded bg-white disabled:bg-neutral-100" />
+                    {!editingEmployeeId && <input type="password" value={employeePassword} onChange={event => setEmployeePassword(event.target.value)} placeholder="Temporary password (12+ characters)" aria-label="Initial employee password" autoComplete="new-password" minLength={12} maxLength={128} required className="px-3 py-2 text-xs border border-[#E4E1D6] rounded bg-white" />}
+                    <select value={employeeRole} onChange={event => { const role = event.target.value as EmployeeRole; setEmployeeRole(role); setEmployeePermissions(rolePermissionDefaults[role]); }} aria-label="Employee role" className="px-3 py-2 text-xs border border-[#E4E1D6] rounded bg-white">
+                      {Object.keys(rolePermissionDefaults).map(role => <option key={role} value={role}>{role}</option>)}
+                    </select>
+                  </div>
+                  <fieldset className="space-y-2">
+                    <legend className="text-xs font-semibold text-[#20241F]">Module permissions</legend>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      {employeeModules.map(module => (
+                        <label key={module.id} className="flex items-center gap-2 text-xs text-[#4B514B]">
+                          <input
+                            type="checkbox"
+                            checked={employeePermissions.includes(module.id)}
+                            disabled={module.id === 'dashboard'}
+                            onChange={event => setEmployeePermissions(previous => event.target.checked
+                              ? [...new Set([...previous, module.id])]
+                              : previous.filter(permission => permission !== module.id))}
+                            className="accent-[#0F5257] disabled:opacity-60"
+                          />
+                          {module.label}
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <button type="submit" disabled={isEmployeeSaving || !employeePermissions.length} className="px-4 py-2 bg-[#0F5257] text-white text-xs font-semibold rounded disabled:opacity-50">
+                    {isEmployeeSaving ? 'Saving...' : editingEmployeeId ? 'Update access' : 'Create employee'}
+                  </button>
+                </form>
+
+                <div className="overflow-x-auto border border-[#E4E1D6] rounded-lg">
+                  <table className="w-full min-w-[640px] text-left text-xs">
+                    <thead className="bg-[#FAF8F3] text-[#666B62] border-b border-[#E4E1D6]">
+                      <tr><th className="p-3">Employee</th><th className="p-3">Role</th><th className="p-3">Modules</th><th className="p-3">Status</th><th className="p-3 text-right">Actions</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E4E1D6]">
+                      {employees.map(employee => (
+                        <tr key={employee.id} className="align-top">
+                          <td className="p-3"><strong className="block">{employee.name}</strong><span className="text-[#666B62]">{employee.email}</span></td>
+                          <td className="p-3">{employee.role}</td>
+                          <td className="p-3 max-w-64">{employee.permissions.map(permission => employeeModules.find(module => module.id === permission)?.label ?? permission).join(', ')}</td>
+                          <td className="p-3"><span className={employee.active ? 'text-emerald-700 font-semibold' : 'text-red-700 font-semibold'}>{employee.active ? 'Active' : 'Deactivated'}</span></td>
+                          <td className="p-3">
+                            <div className="flex justify-end gap-3">
+                              <button type="button" onClick={() => handleEditEmployee(employee)} className="text-[#0F5257] font-semibold hover:underline">Edit</button>
+                              {employee.active && <button type="button" onClick={() => { if (window.confirm(`Deactivate access for ${employee.email}?`)) void handleDeactivateEmployee(employee); }} className="text-red-700 font-semibold hover:underline">Deactivate</button>}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {employees.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-[#666B62]">No employees added yet.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {/* TAB: AUDIT LOGS */}
           {activeNav === 'audit_logs' && (
             <div className="space-y-6">
-              {/* Staff Directory & Role Matrix */}
-              <div className="bg-white rounded-xl p-6 border border-[#E4E1D6] shadow-xs space-y-4">
-                <div className="border-b border-[#E4E1D6] pb-3">
-                  <h3 className="font-serif text-lg font-semibold text-[#20241F]">Role-Based Access Control (RBAC) (REQ-ADM-001)</h3>
-                  <p className="text-xs text-[#666B62]">Configured staff roles with assigned operational permissions.</p>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {staff.map(s => (
-                    <div
-                      key={s.id}
-                      onClick={() => db.setCurrentStaff(s.id)}
-                      className={`p-4 rounded-xl border transition-all cursor-pointer ${
-                        currentStaff.id === s.id ? 'border-[#0F5257] bg-[#EAF1F0]/50 shadow-xs' : 'border-[#E4E1D6] bg-white hover:border-[#0F5257]/40'
-                      }`}
-                    >
-                      <div className="flex justify-between items-start mb-2">
-                        <strong className="text-xs font-bold text-[#20241F]">{s.name}</strong>
-                        {currentStaff.id === s.id && (
-                          <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                        )}
-                      </div>
-                      <span className="text-[11px] font-semibold text-[#0F5257] block">{s.role}</span>
-                      <span className="text-[10px] text-[#666B62] block mb-2">{s.email}</span>
-                      <div className="flex flex-wrap gap-1">
-                        {s.permissions.slice(0, 3).map(p => (
-                          <span key={p} className="text-[9px] bg-white px-1.5 py-0.5 rounded border border-[#E4E1D6]">
-                            {p.replace('_', ' ')}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               {/* Immutable Audit Log Table (REQ-ADM-002) */}
               <div className="bg-white rounded-xl p-6 border border-[#E4E1D6] shadow-xs space-y-4">
                 <div className="border-b border-[#E4E1D6] pb-3 flex justify-between items-center">
@@ -2021,25 +2251,25 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
                 </div>
 
                 <div className="space-y-3">
-                  <h4 className="font-serif text-sm font-bold text-[#20241F]">Brand &amp; Technical Refresh</h4>
+                  <h4 className="font-serif text-sm font-bold text-[#20241F]">Storefront profile</h4>
                   <div className="p-4 bg-[#FAF8F3] rounded-lg border border-[#E4E1D6] space-y-2 text-xs">
                     <div className="flex justify-between">
-                      <span className="text-[#666B62]">Active Logo Version:</span>
-                      <strong className="font-mono text-[#0F5257]">{activeLogo.versionTag}</strong>
+                      <span className="text-[#666B62]">Current brand:</span>
+                      <strong className="font-mono text-[#0F5257]">{activeLogo.config.brandName}</strong>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-[#666B62]">Storefront Sync:</span>
-                      <strong className="text-emerald-700">Enabled (Automatic)</strong>
+                      <span className="text-[#666B62]">Front-end sync:</span>
+                      <strong className="text-emerald-700">Active</strong>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-[#666B62]">Checksum (SHA-256):</span>
+                      <span className="text-[#666B62]">Brand checksum:</span>
                       <span className="font-mono text-[10px] text-[#666B62] truncate w-32">{activeLogo.checksum}</span>
                     </div>
                     <button
-                      onClick={() => setActiveNav('logo_studio')}
+                      onClick={() => setActiveNav('dashboard')}
                       className="w-full mt-2 py-2 bg-[#0F5257] text-white rounded font-semibold text-xs hover:bg-[#0B3D3F] cursor-pointer"
                     >
-                      Open Logo Refresh Studio &rarr;
+                      Open dashboard &rarr;
                     </button>
                   </div>
                 </div>

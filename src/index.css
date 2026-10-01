@@ -2,33 +2,33 @@
 
 @layer base {
   :root {
-    --bg: #F7F5EF;
+    --bg: #F3F7F6;
     --surface: #FFFFFF;
-    --ink: #20241F;
-    --ink-soft: #666B62;
-    --line: #E4E1D6;
-    --brand: #0F5257;
-    --brand-dark: #0B3D3F;
-    --accent: #D9A441;
+    --ink: #142426;
+    --ink-soft: #5C6D6E;
+    --line: #DCE7E5;
+    --brand: #0B6268;
+    --brand-dark: #073F45;
+    --accent: #E1A84B;
   }
 
   body {
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
     color: var(--ink);
     background-color: var(--bg);
   }
 
   h1, h2, h3, h4, .font-serif, .font-head {
-    font-family: 'Fraunces', Georgia, serif;
+    font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
   }
 }
 
 .font-serif {
-  font-family: 'Fraunces', Georgia, serif;
+  font-family: 'Outfit', 'Plus Jakarta Sans', sans-serif;
 }
 
 .font-sans {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
 }
 
 .font-mono {

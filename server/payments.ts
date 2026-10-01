@@ -4,7 +4,7 @@ import type { RowDataPacket } from 'mysql2';
 import Stripe from 'stripe';
 import { z } from 'zod';
 import { getDatabase } from './database.js';
-import { isAdminEmail, verifyBearerToken } from './firebase.js';
+import { requireSession } from './auth.js';
 import type { Order, OrderItem, Product } from '../src/types/logo.js';
 
 const router = Router();
@@ -106,17 +106,17 @@ function formatOrder(row: Record<string, any>): Order {
   } as Order;
 }
 
-async function markPaid(orderId: string, firebaseUid: string, paymentId: string): Promise<void> {
+async function markPaid(orderId: string, accountId: string, paymentId: string): Promise<void> {
   await getDatabase().execute(
     `UPDATE store_orders SET payment_status = 'paid', payment_provider_id = ?, stock_reserved = 0
-     WHERE id = ? AND firebase_uid = ? AND payment_status = 'pending'`,
-    [paymentId, orderId, firebaseUid]
+     WHERE id = ? AND account_id = ? AND payment_status = 'pending'`,
+    [paymentId, orderId, accountId]
   );
 }
 
 router.post('/checkout', async (request, response) => {
   try {
-    const identity = await verifyBearerToken(request.header('authorization'));
+    const identity = await requireSession(request.header('authorization'));
     const input = checkoutSchema.parse(request.body);
     const database = getDatabase();
     const [stateRows] = await database.execute<Array<RowDataPacket & { payload: unknown }>>(
@@ -165,7 +165,7 @@ router.post('/checkout', async (request, response) => {
     const total = roundMoney(Math.max(0, subtotal + shipping + tax - discount));
     const id = randomUUID();
     const orderNumber = `HAVN-${Date.now().toString(36).toUpperCase()}`;
-    const email = identity.email ?? `${identity.uid}@phone.havn.invalid`;
+    const email = identity.email;
     const shippingAddress = input.shippingAddress;
     const itemsJson = JSON.stringify(orderItems);
     const addressJson = JSON.stringify(shippingAddress);
@@ -175,9 +175,9 @@ router.post('/checkout', async (request, response) => {
       try {
         await database.execute(
           `INSERT INTO store_orders
-            (id, order_number, firebase_uid, customer_email, currency, subtotal, shipping, tax, discount, total, coupon_code, shipping_method, payment_method, payment_provider, payment_status, order_status, items, shipping_address)
+            (id, order_number, account_id, customer_email, currency, subtotal, shipping, tax, discount, total, coupon_code, shipping_method, payment_method, payment_provider, payment_status, order_status, items, shipping_address)
            VALUES (?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, 'cod', 'pending', 'processing', ?, ?)`,
-          [id, orderNumber, identity.uid, email, subtotal, shipping, tax, discount, total, input.couponCode ?? null, input.shippingMethod, input.paymentMethod, itemsJson, addressJson]
+          [id, orderNumber, identity.id, email, subtotal, shipping, tax, discount, total, input.couponCode ?? null, input.shippingMethod, input.paymentMethod, itemsJson, addressJson]
         );
       } catch (error) {
         await changeInventory(orderItems, 'release', input.couponCode);
@@ -194,14 +194,14 @@ router.post('/checkout', async (request, response) => {
     try {
       await database.execute(
         `INSERT INTO store_orders
-          (id, order_number, firebase_uid, customer_email, currency, subtotal, shipping, tax, discount, total, coupon_code, shipping_method, payment_method, payment_provider, stock_reserved, payment_status, order_status, items, shipping_address)
+          (id, order_number, account_id, customer_email, currency, subtotal, shipping, tax, discount, total, coupon_code, shipping_method, payment_method, payment_provider, stock_reserved, payment_status, order_status, items, shipping_address)
          VALUES (?, ?, ?, ?, 'USD', ?, ?, ?, ?, ?, ?, ?, ?, 'stripe', 1, 'pending', 'processing', ?, ?)`,
-        [id, orderNumber, identity.uid, email, subtotal, shipping, tax, discount, total, input.couponCode ?? null, input.shippingMethod, input.paymentMethod, itemsJson, addressJson]
+        [id, orderNumber, identity.id, email, subtotal, shipping, tax, discount, total, input.couponCode ?? null, input.shippingMethod, input.paymentMethod, itemsJson, addressJson]
       );
       const session = await stripe.checkout.sessions.create({
         mode: 'payment',
-        client_reference_id: identity.uid,
-        customer_email: identity.email ?? undefined,
+        client_reference_id: identity.id,
+        customer_email: identity.email,
         expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
         line_items: [{
           price_data: {
@@ -223,24 +223,24 @@ router.post('/checkout', async (request, response) => {
       throw error;
     }
   } catch (error) {
-    const status = error instanceof z.ZodError ? 400 : error instanceof Error && error.message.includes('bearer token') ? 401 : 400;
+    const status = error instanceof z.ZodError ? 400 : error instanceof Error && error.message.includes('session') ? 401 : 400;
     response.status(status).json({ error: error instanceof Error ? error.message : 'Unable to start checkout.' });
   }
 });
 
 router.post('/confirm', async (request, response) => {
   try {
-    const identity = await verifyBearerToken(request.header('authorization'));
+    const identity = await requireSession(request.header('authorization'));
     const input = z.object({ orderId: z.string().uuid(), sessionId: z.string().min(1) }).parse(request.body);
     const stripe = getStripe();
     const session = await stripe.checkout.sessions.retrieve(input.sessionId);
-    if (session.metadata?.orderId !== input.orderId || session.client_reference_id !== identity.uid || session.payment_status !== 'paid') {
+    if (session.metadata?.orderId !== input.orderId || session.client_reference_id !== identity.id || session.payment_status !== 'paid') {
       response.status(400).json({ error: 'Payment has not been verified.' });
       return;
     }
-    await markPaid(input.orderId, identity.uid, session.id);
+    await markPaid(input.orderId, identity.id, session.id);
     const [rows] = await getDatabase().execute<Array<RowDataPacket & Record<string, any>>>(
-      'SELECT * FROM store_orders WHERE id = ? AND firebase_uid = ?', [input.orderId, identity.uid]
+      'SELECT * FROM store_orders WHERE id = ? AND account_id = ?', [input.orderId, identity.id]
     );
     if (!rows[0]) {
       response.status(404).json({ error: 'Order not found.' });
@@ -248,16 +248,16 @@ router.post('/confirm', async (request, response) => {
     }
     response.json({ order: formatOrder(rows[0]) });
   } catch (error) {
-    const status = error instanceof z.ZodError ? 400 : error instanceof Error && error.message.includes('bearer token') ? 401 : 400;
+    const status = error instanceof z.ZodError ? 400 : error instanceof Error && error.message.includes('session') ? 401 : 400;
     response.status(status).json({ error: error instanceof Error ? error.message : 'Unable to verify payment.' });
   }
 });
 
 router.get('/orders', async (request, response) => {
   try {
-    const identity = await verifyBearerToken(request.header('authorization'));
+    const identity = await requireSession(request.header('authorization'));
     const [rows] = await getDatabase().execute<Array<RowDataPacket & Record<string, any>>>(
-      'SELECT * FROM store_orders WHERE firebase_uid = ? ORDER BY created_at DESC LIMIT 100', [identity.uid]
+      'SELECT * FROM store_orders WHERE account_id = ? ORDER BY created_at DESC LIMIT 100', [identity.id]
     );
     response.json({ orders: rows.map(formatOrder) });
   } catch (error) {
@@ -276,14 +276,15 @@ router.post('/admin/refund', async (request, response) => {
     return;
   }
 
-  let identity;
+  let identity: Awaited<ReturnType<typeof requireSession>>;
   try {
-    identity = await verifyBearerToken(request.header('authorization'));
+    identity = await requireSession(request.header('authorization'));
   } catch (error) {
     response.status(401).json({ error: error instanceof Error ? error.message : 'Authentication failed.' });
     return;
   }
-  if (!identity.email_verified || !isAdminEmail(identity.email)) {
+  const canRefund = identity.role === 'super_admin' || identity.permissions.includes('orders');
+  if (!canRefund) {
     response.status(403).json({ error: 'Admin access is not authorized.' });
     return;
   }

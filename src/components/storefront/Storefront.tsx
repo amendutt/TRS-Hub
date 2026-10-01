@@ -2,18 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Product, Order, LogoConfig, StaticPage, ProductReview, CustomerAddress } from '../../types/logo';
 import { db } from '../../services/mysqlMockDb';
 import { confirmStripePayment, createCheckout, loadAccountProfile, loadCustomerOrders, saveAccountProfile } from '../../services/api';
-import {
-  firebaseAuth,
-  firebaseConfigured,
-  observeFirebaseUser,
-  requestPasswordReset,
-  sendPhoneOtp,
-  signInWithEmail,
-  signInWithGoogle,
-  signOutFirebase,
-  verifyPhoneOtp
-} from '../../services/firebaseAuth';
-import type { ConfirmationResult, User as FirebaseUser } from 'firebase/auth';
+import { registerWithEmail, signInWithEmail, signOut, observeAuthSession } from '../../services/auth';
+import { updateAuthSessionUser, type AuthSession } from '../../services/authSession';
 import logoImage from '../../assets/images/logo.png.png';
 import {
   Search,
@@ -43,12 +33,10 @@ import {
 
 interface StorefrontProps {
   onOpenAdminPortal?: () => void;
-  onOpenLogoStudio?: () => void;
 }
 
 export const Storefront: React.FC<StorefrontProps> = ({
-  onOpenAdminPortal,
-  onOpenLogoStudio
+  onOpenAdminPortal
 }) => {
   // Screen flow matching visual design text file
   const [currentView, setCurrentView] = useState<'home' | 'product_detail' | 'checkout' | 'order_success'>('home');
@@ -70,21 +58,18 @@ export const Storefront: React.FC<StorefrontProps> = ({
 
   // Customer Account & Authentication state (REQ-USR-001..004)
   const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
-  const [authMode, setAuthMode] = useState<'login' | 'register' | 'otp' | 'forgot_password'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authName, setAuthName] = useState<string>('');
   const [authEmail, setAuthEmail] = useState<string>('');
   const [authPassword, setAuthPassword] = useState<string>('');
-  const [authPhone, setAuthPhone] = useState<string>('');
-  const [authOtpCode, setAuthOtpCode] = useState<string>('');
-  const [phoneConfirmation, setPhoneConfirmation] = useState<ConfirmationResult | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string>('');
   const [isCustomerLoggedIn, setIsCustomerLoggedIn] = useState<boolean>(false);
   const [customerName, setCustomerName] = useState<string>('');
-  const [customerUser, setCustomerUser] = useState<FirebaseUser | null>(null);
+  const [customerUser, setCustomerUser] = useState<AuthSession | null>(null);
   const [customerOrders, setCustomerOrders] = useState<Order[]>([]);
   const [isCheckoutLoading, setIsCheckoutLoading] = useState<boolean>(false);
   const [checkoutError, setCheckoutError] = useState<string>('');
-  const [otpNotificationMessage, setOtpNotificationMessage] = useState<string>('');
   const [savedAddresses, setSavedAddresses] = useState<CustomerAddress[]>([]);
   const [selectedAddressId, setSelectedAddressId] = useState<string>('');
   const [isAddressFormOpen, setIsAddressFormOpen] = useState<boolean>(false);
@@ -94,22 +79,25 @@ export const Storefront: React.FC<StorefrontProps> = ({
     label: 'Home', firstName: '', lastName: '', address: '', city: '', pincode: '', phone: ''
   });
 
-  useEffect(() => observeFirebaseUser(user => {
-    setCustomerUser(user);
-    setIsCustomerLoggedIn(Boolean(user));
-    setCustomerName(user?.displayName || user?.phoneNumber || user?.email || '');
-    setAuthEmail(user?.email ?? '');
-    setAuthPhone(user?.phoneNumber ?? '');
+  useEffect(() => observeAuthSession(session => {
+    setCustomerUser(session);
+    setIsCustomerLoggedIn(Boolean(session));
+    setCustomerName(session?.user.displayName || session?.user.email || '');
+    setAuthEmail(session?.user.email ?? '');
     setSavedAddresses([]);
     setSelectedAddressId('');
     setWishlist([]);
-    if (user) {
-      void loadAccountProfile(user).then(profile => {
+    if (session) {
+      void loadAccountProfile(session).then(profile => {
+        updateAuthSessionUser(profile);
         setSavedAddresses(profile.savedAddresses ?? []);
         setWishlist(products.filter(product => profile.wishlist.includes(product.id)));
         setSelectedAddressId(profile.savedAddresses.find(address => address.isDefault)?.id ?? '');
-      }).catch(error => setProfileError(error instanceof Error ? error.message : 'Unable to load your saved profile.'));
-      void loadCustomerOrders(user).then(setCustomerOrders).catch(() => setCustomerOrders([]));
+      }).catch(error => {
+        setProfileError(error instanceof Error ? error.message : 'Unable to load your saved profile.');
+        void signOut();
+      });
+      void loadCustomerOrders(session).then(setCustomerOrders).catch(() => setCustomerOrders([]));
     } else {
       setCustomerOrders([]);
     }
@@ -286,9 +274,9 @@ export const Storefront: React.FC<StorefrontProps> = ({
     if (query.get('checkout') !== 'success' || !orderId || !sessionId) return;
 
     let isMounted = true;
-    const unsubscribe = observeFirebaseUser(user => {
-      if (!user || !isMounted) return;
-      void confirmStripePayment(user, orderId, sessionId)
+    const unsubscribe = observeAuthSession(session => {
+      if (!session || !isMounted) return;
+      void confirmStripePayment(session, orderId, sessionId)
         .then(async order => {
           if (!isMounted) return;
           setCheckoutError('');
@@ -296,7 +284,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
           setTrackedOrderNumber(order.orderNumber);
           setCart([]);
           setCurrentView('order_success');
-          setCustomerOrders(await loadCustomerOrders(user));
+          setCustomerOrders(await loadCustomerOrders(session));
         })
         .catch(error => {
           if (isMounted) {
@@ -312,7 +300,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
     };
   }, []);
 
-  // Active logo config from MySQL
+  // Shared storefront brand config
   const activeLogo = db.getActiveVersion();
 
   // Price calculations (REQ-CHK002)
@@ -467,15 +455,12 @@ export const Storefront: React.FC<StorefrontProps> = ({
 
   return (
     <div className="min-h-screen bg-[#F7F5EF] text-[#20241F] flex flex-col font-sans">
-      {/* Top Banner Notice (Discrete & informative) */}
-      <div className="bg-[#0F5257] text-[#EDEFEA] px-4 py-2 text-xs flex items-center justify-between">
+      {/* Top service notice */}
+      <div className="bg-[#073F45] text-[#E6F2F0] px-4 py-2 text-xs flex items-center justify-between">
         <div className="max-w-7xl mx-auto w-full flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-[#D9A441] font-semibold">{activeLogo.config.brandName}:</span>
-            <span className="hidden sm:inline">Active Brand Version:</span>
-            <strong className="font-mono text-white bg-[#0B3D3F] px-1.5 py-0.5 rounded text-[11px]">
-              {activeLogo.versionTag}
-            </strong>
+            <span className="text-[#E1A84B] font-semibold">TRS Hub:</span>
+            <span className="hidden sm:inline">Professionally checked technology, ready for its next chapter.</span>
           </div>
 
           <div className="flex items-center gap-4 text-xs">
@@ -519,14 +504,6 @@ export const Storefront: React.FC<StorefrontProps> = ({
               <Truck className="w-3.5 h-3.5 text-[#D9A441]" />
               <span className="hidden sm:inline">Live</span> Order Tracking
             </button>
-            <span className="text-white/40">|</span>
-            <button
-              onClick={onOpenLogoStudio}
-              className="text-[#D9A441] hover:underline font-semibold flex items-center gap-1 cursor-pointer"
-            >
-              Logo Studio →
-            </button>
-            <span className="text-white/40">|</span>
             <button
               onClick={onOpenAdminPortal}
               className="text-white hover:text-[#D9A441] transition-colors cursor-pointer"
@@ -626,17 +603,17 @@ export const Storefront: React.FC<StorefrontProps> = ({
         {/* VIEW 1: HOME PAGE */}
         {currentView === 'home' && (
           <div className="space-y-12">
-            {/* Hero Section matching visual design mockup */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-white rounded-2xl p-6 sm:p-10 border border-[#E4E1D6] shadow-sm">
+            {/* Hero Section */}
+            <div className="relative overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-8 items-center bg-[#E1EFED] rounded-2xl p-6 sm:p-10 border border-[#C9DEDB] shadow-sm">
               <div className="lg:col-span-6 space-y-4">
-                <span className="text-xs font-semibold uppercase tracking-widest text-[#0F5257]">
-                  Curated Catalog · Havn Refresh
+                <span className="text-xs font-semibold uppercase tracking-widest text-[#0B6268]">
+                  Refreshed technology · ready to work
                 </span>
-                <h1 className="font-serif text-3xl sm:text-4xl lg:text-5xl font-bold text-[#20241F] leading-[1.15] text-balance">
-                  Goods for a considered life.
+                <h1 className="font-serif text-3xl sm:text-4xl lg:text-5xl font-bold text-[#142426] leading-[1.08] text-balance">
+                  Better tech for the work ahead.
                 </h1>
-                <p className="text-[#666B62] text-sm sm:text-base max-w-md leading-relaxed">
-                  One store, every category — curated by people who use what they sell. Solid wood joinery, heavy cotton apparel, and artisanal stoneware.
+                <p className="text-[#5C6D6E] text-sm sm:text-base max-w-md leading-relaxed">
+                  Reliable laptops, workstations, displays, and network equipment, professionally inspected and backed by practical support.
                 </p>
                 <div className="pt-2 flex items-center gap-4">
                   <button
@@ -644,9 +621,9 @@ export const Storefront: React.FC<StorefrontProps> = ({
                       setSelectedProduct(products[0]);
                       setCurrentView('product_detail');
                     }}
-                    className="px-5 py-2.5 bg-[#D9A441] text-[#26210F] rounded-lg text-sm font-semibold hover:bg-[#c99535] transition-all cursor-pointer shadow-sm"
+                    className="px-5 py-2.5 bg-[#E1A84B] text-[#2E2515] rounded-lg text-sm font-semibold hover:bg-[#d39836] transition-all cursor-pointer shadow-sm"
                   >
-                    Shop new arrivals
+                    Browse refreshed tech
                   </button>
                   <button
                     onClick={() => {
@@ -655,16 +632,16 @@ export const Storefront: React.FC<StorefrontProps> = ({
                     }}
                     className="px-4 py-2.5 text-sm font-semibold text-[#20241F] hover:text-[#0F5257] transition-colors"
                   >
-                    View Pour-Over Set →
+                    Explore business essentials →
                   </button>
                 </div>
               </div>
 
               <div className="lg:col-span-6">
-                <div className="relative rounded-xl overflow-hidden h-[280px] sm:h-[340px] bg-[#EAE6D8]">
+                <div className="relative rounded-xl overflow-hidden h-[280px] sm:h-[340px] bg-[#C9DEDB]">
                   <img
                     src="/src/assets/images/havn_hero_furniture_1790578538197.jpg"
-                    alt="Scandinavian interior with solid oak furniture"
+                    alt="Modern workspace with technology and furniture"
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
                   />
@@ -676,9 +653,9 @@ export const Storefront: React.FC<StorefrontProps> = ({
                     }}
                     className="absolute bottom-4 left-4 bg-white/95 backdrop-blur-xs rounded-xl p-3.5 shadow-lg border border-[#E4E1D6] cursor-pointer hover:scale-102 transition-transform"
                   >
-                    <span className="text-[11px] text-[#666B62] block">Featured Piece</span>
-                    <strong className="font-serif text-sm sm:text-base text-[#0B3D3F] block">Oak Bookshelf</strong>
-                    <span className="font-serif text-xs font-bold text-[#D9A441]">$249.00</span>
+                    <span className="text-[11px] text-[#5C6D6E] block">Featured system</span>
+                    <strong className="font-serif text-sm sm:text-base text-[#073F45] block">Work-ready hardware</strong>
+                    <span className="font-serif text-xs font-bold text-[#B47A21]">Inspected &amp; ready</span>
                   </div>
                 </div>
               </div>
@@ -1703,7 +1680,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
           <div className="space-y-3">
             <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-10 max-w-[180px] object-contain" />
             <p className="text-xs text-[#9AA39B] max-w-xs leading-relaxed">
-              {activeLogo.config.brandName} — Configurable enterprise catalog, certified technical refresh solutions, and sustainable procurement architecture.
+              {activeLogo.config.brandName} — Professional refurbished hardware, responsive service, and reliable procurement for modern teams.
             </p>
           </div>
 
@@ -1721,28 +1698,26 @@ export const Storefront: React.FC<StorefrontProps> = ({
           </div>
 
           <div className="space-y-2">
-            <h4 className="text-xs font-semibold text-[#D9A441] uppercase tracking-wider">Brand Solution</h4>
+            <h4 className="text-xs font-semibold text-[#D9A441] uppercase tracking-wider">Support</h4>
             <ul className="text-xs text-[#9AA39B] space-y-1.5">
-              <li><button onClick={onOpenLogoStudio} className="hover:text-white cursor-pointer">Logo Technical Refresh Studio</button></li>
-              <li><button onClick={onOpenLogoStudio} className="hover:text-white cursor-pointer">MySQL Metadata Schema</button></li>
-              <li><button onClick={onOpenLogoStudio} className="hover:text-white cursor-pointer">Version History &amp; Rollback</button></li>
+              <li><button onClick={() => setCurrentView('home')} className="hover:text-white cursor-pointer">Latest inventory</button></li>
+              <li><button onClick={() => setCurrentView('checkout')} className="hover:text-white cursor-pointer">Checkout support</button></li>
               <li><button onClick={onOpenAdminPortal} className="hover:text-white cursor-pointer">Back-Office Admin Portal</button></li>
             </ul>
           </div>
 
           <div className="space-y-2">
-            <h4 className="text-xs font-semibold text-[#D9A441] uppercase tracking-wider">Governance</h4>
+            <h4 className="text-xs font-semibold text-[#D9A441] uppercase tracking-wider">Why TRS Hub</h4>
             <p className="text-xs text-[#9AA39B] leading-relaxed">
-              Active Brand Version: <strong className="text-white font-mono">{activeLogo.versionTag}</strong><br />
-              Status: <span className="text-[#D9A441] font-semibold">{activeLogo.status.toUpperCase()}</span><br />
-              Database: MySQL 8.0 InnoDB
+              Every item is inspected, clearly graded, and prepared for dependable daily use.<br />
+              Practical warranties. Thoughtful support. Less waste.
             </p>
           </div>
         </div>
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 mt-8 border-t border-neutral-800 text-xs text-[#666B62] flex flex-col sm:flex-row justify-between items-center gap-2">
           <span>&copy; 2026 {activeLogo.config.brandName}. All rights reserved.</span>
-          <span>BRD / SRS &amp; SOP Enterprise Implementation</span>
+          <span>Inspected technology for modern teams</span>
         </div>
       </footer>
 
@@ -2034,12 +2009,12 @@ export const Storefront: React.FC<StorefrontProps> = ({
                 <div className="p-4 bg-[#FAF8F3] rounded-xl border border-[#E4E1D6] flex justify-between items-center text-xs">
                   <div>
                     <strong className="text-sm font-serif text-[#20241F] block">{customerName}</strong>
-                    <span className="text-[#666B62]">{authEmail} · {authPhone}</span>
+                    <span className="text-[#666B62]">{authEmail}</span>
                     <span className="text-emerald-700 font-semibold block mt-1">Authenticated account</span>
                   </div>
                   <button
                     onClick={() => {
-                      void signOutFirebase();
+                      void signOut();
                     }}
                     className="px-3 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
                   >
@@ -2162,204 +2137,55 @@ export const Storefront: React.FC<StorefrontProps> = ({
                 </div>
               </div>
             ) : (
-              /* Unauthenticated View: Auth Tabs (Email, OTP, Forgot Password, Social) */
+              /* Unauthenticated account access */
               <div className="space-y-4">
-                {/* Tabs */}
                 <div className="flex border-b border-[#E4E1D6] gap-2">
-                  {[
-                    { id: 'login', label: 'Email Login' },
-                    { id: 'otp', label: 'Mobile OTP (REQ-USR-001)' },
-                    { id: 'forgot_password', label: 'Reset Password (REQ-USR-002)' }
-                  ].map(tab => (
+                  {(['login', 'register'] as const).map(mode => (
                     <button
-                      key={tab.id}
-                      onClick={() => setAuthMode(tab.id as any)}
+                      key={mode}
+                      onClick={() => { setAuthMode(mode); setAuthError(''); }}
                       className={`pb-2 px-2 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
-                        authMode === tab.id ? 'border-[#0F5257] text-[#0F5257]' : 'border-transparent text-[#666B62]'
+                        authMode === mode ? 'border-[#0F5257] text-[#0F5257]' : 'border-transparent text-[#666B62]'
                       }`}
                     >
-                      {tab.label}
+                      {mode === 'login' ? 'Sign in' : 'Create account'}
                     </button>
                   ))}
                 </div>
 
-                {otpNotificationMessage && (
-                  <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg flex items-center gap-2">
-                    <Smartphone className="w-4 h-4 text-amber-700 shrink-0" />
-                    <span>{otpNotificationMessage}</span>
-                  </div>
-                )}
-                {authError && <div className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-lg">{authError}</div>}
-                {!firebaseConfigured && <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-lg">Sign-in is not configured for this deployment.</div>}
-
-                {/* Tab 1: Email Password Login */}
-                {authMode === 'login' && (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      setAuthError('');
-                      setIsAuthLoading(true);
-                      void signInWithEmail(authEmail, authPassword)
-                        .then(() => setShowAuthModal(false))
-                        .catch(error => setAuthError(error instanceof Error ? error.message : 'Sign-in failed.'))
-                        .finally(() => setIsAuthLoading(false));
-                    }}
-                    className="space-y-3"
-                  >
-                    <div>
-                      <label className="block text-xs font-medium text-[#666B62] mb-1">Email Address</label>
-                      <input
-                        type="email"
-                        value={authEmail}
-                        onChange={(e) => setAuthEmail(e.target.value)}
-                        className="w-full px-3 py-2 text-xs rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]"
-                        required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-[#666B62] mb-1">Password</label>
-                      <input
-                        type="password"
-                        value={authPassword}
-                        onChange={(e) => setAuthPassword(e.target.value)}
-                        className="w-full px-3 py-2 text-xs rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]"
-                        required
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      disabled={!firebaseConfigured || isAuthLoading}
-                      className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      Sign In with Email
-                    </button>
-                  </form>
-                )}
-
-                {/* Tab 2: Mobile OTP Login (REQ-USR-001) */}
-                {authMode === 'otp' && (
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-xs font-medium text-[#666B62] mb-1">Mobile Number (+91)</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="tel"
-                          value={authPhone}
-                          onChange={(e) => setAuthPhone(e.target.value)}
-                          placeholder="+1 555 000 0000"
-                          className="flex-1 px-3 py-2 text-xs font-mono rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]"
-                        />
-                        <button
-                          type="button"
-                          disabled={!firebaseConfigured || isAuthLoading || !authPhone.trim()}
-                          onClick={() => {
-                            setAuthError('');
-                            setOtpNotificationMessage('');
-                            setIsAuthLoading(true);
-                            void sendPhoneOtp(authPhone, 'phone-otp-recaptcha')
-                              .then(confirmation => {
-                                setPhoneConfirmation(confirmation);
-                                setAuthOtpCode('');
-                                setOtpNotificationMessage(`Verification code sent to ${authPhone}.`);
-                              })
-                              .catch(error => setAuthError(error instanceof Error ? error.message : 'Unable to send verification code.'))
-                              .finally(() => setIsAuthLoading(false));
-                          }}
-                          className="px-4 py-2 bg-[#FAF8F3] hover:bg-[#EAE6D8] disabled:opacity-50 border border-[#E4E1D6] text-xs font-semibold text-[#0F5257] rounded-lg shrink-0 cursor-pointer disabled:cursor-not-allowed"
-                        >
-                          Send OTP
-                        </button>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-[#666B62] mb-1">Enter 6-Digit OTP</label>
-                      <div id="phone-otp-recaptcha" />
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        autoComplete="one-time-code"
-                        maxLength={6}
-                        placeholder="6-digit code"
-                        value={authOtpCode}
-                        onChange={(e) => setAuthOtpCode(e.target.value)}
-                        className="w-full px-3 py-2 text-xs font-mono font-bold tracking-widest text-center rounded-lg border border-[#E4E1D6] bg-white"
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      disabled={!phoneConfirmation || authOtpCode.length !== 6 || isAuthLoading}
-                      onClick={() => {
-                        if (!phoneConfirmation) return;
-                        setAuthError('');
-                        setIsAuthLoading(true);
-                        void verifyPhoneOtp(phoneConfirmation, authOtpCode)
-                          .then(() => setShowAuthModal(false))
-                          .catch(error => setAuthError(error instanceof Error ? error.message : 'Verification failed.'))
-                          .finally(() => setIsAuthLoading(false));
-                      }}
-                      className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      Verify &amp; Sign In
-                    </button>
-                  </div>
-                )}
-
-                {/* Tab 3: Forgot Password (REQ-USR-002) */}
-                {authMode === 'forgot_password' && (
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      setAuthError('');
-                      setIsAuthLoading(true);
-                      void requestPasswordReset(authEmail)
-                        .then(() => setOtpNotificationMessage(`Password reset email sent to ${authEmail}.`))
-                        .catch(error => setAuthError(error instanceof Error ? error.message : 'Unable to send reset email.'))
-                        .finally(() => setIsAuthLoading(false));
-                    }}
-                    className="space-y-3"
-                  >
-                    <div>
-                      <label className="block text-xs font-medium text-[#666B62] mb-1">Registered Email Address</label>
-                      <input
-                        type="email"
-                        value={authEmail}
-                        onChange={(e) => setAuthEmail(e.target.value)}
-                        className="w-full px-3 py-2 text-xs rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]"
-                        required
-                      />
-                    </div>
-                    <button
-                      type="submit"
-                      className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] text-white rounded-lg text-xs font-semibold transition-all cursor-pointer"
-                    >
-                      Send Password Reset Link
-                    </button>
-                  </form>
-                )}
-
-                {/* Google sign-in */}
-                <div className="pt-2 border-t border-[#E4E1D6] space-y-2">
-                  <span className="text-[11px] text-[#666B62] block text-center">Or continue with Google</span>
-                  <div className="grid grid-cols-1 gap-2">
-                    <button
-                      type="button"
-                      disabled={!firebaseConfigured || isAuthLoading}
-                      onClick={() => {
-                        setAuthError('');
-                        setIsAuthLoading(true);
-                        void signInWithGoogle()
-                          .then(() => setShowAuthModal(false))
-                          .catch(error => setAuthError(error instanceof Error ? error.message : 'Google sign-in failed.'))
-                          .finally(() => setIsAuthLoading(false));
-                      }}
-                      className="py-2 px-3 border border-[#E4E1D6] rounded-lg text-xs font-medium hover:bg-[#FAF8F3] disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
-                    >
-                      <span>Continue with Google</span>
-                    </button>
-                  </div>
-                </div>
+                {authError && <div role="alert" className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-lg">{authError}</div>}
+                <form
+                  onSubmit={event => {
+                    event.preventDefault();
+                    setAuthError('');
+                    setIsAuthLoading(true);
+                    const action = authMode === 'register'
+                      ? registerWithEmail(authName, authEmail, authPassword)
+                      : signInWithEmail(authEmail, authPassword);
+                    void action.then(() => setShowAuthModal(false))
+                      .catch(error => setAuthError(error instanceof Error ? error.message : 'Account access failed.'))
+                      .finally(() => setIsAuthLoading(false));
+                  }}
+                  className="space-y-3"
+                >
+                  {authMode === 'register' && (
+                    <label className="block text-xs font-medium text-[#666B62]">
+                      Name
+                      <input value={authName} onChange={event => setAuthName(event.target.value)} autoComplete="name" maxLength={160} required className="mt-1 w-full px-3 py-2 text-xs rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]" />
+                    </label>
+                  )}
+                  <label className="block text-xs font-medium text-[#666B62]">
+                    Email address
+                    <input type="email" value={authEmail} onChange={event => setAuthEmail(event.target.value)} autoComplete="email" required className="mt-1 w-full px-3 py-2 text-xs rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]" />
+                  </label>
+                  <label className="block text-xs font-medium text-[#666B62]">
+                    Password
+                    <input type="password" value={authPassword} onChange={event => setAuthPassword(event.target.value)} autoComplete={authMode === 'register' ? 'new-password' : 'current-password'} minLength={authMode === 'register' ? 12 : 1} maxLength={128} required className="mt-1 w-full px-3 py-2 text-xs rounded-lg border border-[#E4E1D6] bg-[#F7F5EF]" />
+                  </label>
+                  <button type="submit" disabled={isAuthLoading} className="w-full py-2.5 bg-[#0F5257] hover:bg-[#0B3D3F] disabled:opacity-50 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer disabled:cursor-not-allowed">
+                    {isAuthLoading ? 'Please wait...' : authMode === 'register' ? 'Create account' : 'Sign in'}
+                  </button>
+                </form>
               </div>
             )}
           </div>
