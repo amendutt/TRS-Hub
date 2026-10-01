@@ -56,6 +56,10 @@ TRS Hub is a React and TypeScript storefront with an Express API, MySQL persiste
 
 For local development, set `APP_URL=http://localhost:3000`. It is needed for Stripe redirect URLs when testing card checkout. A real `MYSQL_URL` enables persistent database-backed authentication; without it or with the example URL, local development uses the temporary demo Super Admin mode.
 
+## Admin Sign-In
+
+Open the Admin Portal and use the email and password configured as `SUPER_ADMIN_EMAIL` and `SUPER_ADMIN_PASSWORD` in your private `.env` file. The example email is `admin@example.com`; choose your own unique password in `.env`. No reusable admin password is shipped in this repository. In local demo mode, these values authenticate the temporary in-memory Super Admin. With MySQL configured, run `npm run seed:demo-admin` once to create the database-backed Super Admin. The seed command will not overwrite an existing account or recover its password.
+
 ## Environment Variables
 
 Copy `.env.example` to `.env`. Keep `.env` and `.env.local` private; both are ignored by Git. `.env.example` is the only environment file intended for GitHub, and it must contain placeholders only.
