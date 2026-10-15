@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
-import { ensureDatabaseSchema, getDatabase } from '../server/database.js';
-import { hashPassword } from '../server/password.js';
+import { ensureDatabaseSchema, getDatabase } from '../server/src/database.js';
+import { hashPassword } from '../server/src/password.js';
 
 const email = process.env.SUPER_ADMIN_EMAIL?.trim().toLowerCase();
 const password = process.env.SUPER_ADMIN_PASSWORD;

@@ -2,6 +2,12 @@
 
 TRS Hub is a React and TypeScript storefront with an Express API, MySQL persistence, role-based administration, and optional Stripe Checkout. Customer and employee accounts authenticate against the application database; local development also supports a temporary in-memory Super Admin mode. Firebase Authentication is not used.
 
+The React storefront lives in the root `src/` directory. The Node.js/Express backend source lives in `server/src/`; both use the existing MySQL connection and persistence implementation. `npm run dev` and `npm start` run the backend from `server/src/index.ts`.
+
+## API Reference
+
+See [docs/API.md](./docs/API.md) for all API endpoints, authentication requirements, request examples, response shapes, and error statuses.
+
 ## Features
 
 - Storefront accounts with email/password registration and sign-in.
@@ -9,6 +15,7 @@ TRS Hub is a React and TypeScript storefront with an Express API, MySQL persiste
 - Customer profiles with saved addresses and wishlists.
 - Super Admin provisioning of employees, operational roles, and per-module permissions.
 - Server-side authorization for admin reads, writes, refunds, and employee management.
+- Super Admin JSON database backup downloads, excluding password hashes, sessions, and payment provider IDs.
 - Product, inventory, order, review, promotion, and store-content management.
 - Product image upload with previews and JPG, PNG, and WebP validation.
 - Cash on Delivery and USD Stripe Checkout, with server-side price calculation and webhook verification.
@@ -51,6 +58,8 @@ TRS Hub is a React and TypeScript storefront with an Express API, MySQL persiste
 	Open `http://localhost:3000`. Vite proxies `/api` requests to the Express API on port `3002`. Sign in to the admin portal with the Super Admin credentials. On its first successful sign-in, the bundled initial store data is persisted to MySQL.
 
 	For a quick local UI run, the API supports a development-only fallback when `MYSQL_URL` is empty or still contains `change-me`. In that mode, the Super Admin credentials from `.env` authenticate in memory and admin state lasts until the API restarts. Production and any local setup with a real `MYSQL_URL` remain database-only.
+
+The Super Admin can download a JSON backup from the admin sidebar's **Database Backup** page. Backups contain store and customer data, so keep downloaded files secure. The development-only in-memory mode exports only the store state held by that API process.
 
 	If the admin screen shows `Request failed (502)`, the API is not running. The most common cause is the example `MYSQL_URL` still pointing to `havn_user:change-me@127.0.0.1`. Create the MySQL database and user first, replace that URL in `.env`, then restart `npm run dev`. A 502 is a backend connection problem, not an invalid admin password.
 
@@ -109,6 +118,8 @@ Subscribe it to `checkout.session.completed`, `checkout.session.expired`, and `c
 | `npm run build` | Build the production frontend into `dist/`. |
 | `npm start` | Start Express; serves the API and built frontend. |
 | `npm run seed:demo-admin` | Create the initial Super Admin using `.env` values. |
+
+Backend source and database schema are organized separately from the storefront: API routes and middleware, MySQL access, password hashing, and payments are in `server/src/`. The API continues to initialize its existing MySQL schema at startup; this source-folder organization does not change table definitions or require a database migration.
 
 ## Production Deployment
 

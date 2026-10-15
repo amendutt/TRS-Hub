@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../services/mysqlMockDb';
-import { createAdminEmployee, deactivateAdminEmployee, loadAccountProfile, loadAdminEmployees, loadAdminState, requestAdminRefund, saveAdminState, updateAdminEmployee } from '../../services/api';
+import { createAdminEmployee, deactivateAdminEmployee, downloadAdminBackup, loadAccountProfile, loadAdminEmployees, loadAdminState, requestAdminRefund, saveAdminState, updateAdminEmployee } from '../../services/api';
 import type { AdminEmployee, AdminPermission, EmployeeRole } from '../../services/api';
 import { getAuthSession, observeAuthSession, signInWithEmail, signOut } from '../../services/auth';
 import {
@@ -53,12 +53,13 @@ import {
   Mail,
   Smartphone,
   Layers,
-  ArrowRight
+  ArrowRight,
+  Database
 } from 'lucide-react';
 
 interface AdminPortalProps {
   onBackToStorefront: () => void;
-  initialTab?: 'dashboard' | 'catalog' | 'categories' | 'orders' | 'reviews' | 'customers' | 'marketing' | 'reports' | 'audit_logs' | 'settings' | 'employees';
+  initialTab?: 'dashboard' | 'catalog' | 'categories' | 'orders' | 'reviews' | 'customers' | 'marketing' | 'reports' | 'audit_logs' | 'settings' | 'employees' | 'backup';
 }
 
 const employeeModules: Array<{ id: AdminPermission; label: string }> = [
@@ -84,7 +85,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   onBackToStorefront,
   initialTab = 'dashboard'
 }) => {
-  const [activeNav, setActiveNav] = useState<'dashboard' | 'catalog' | 'categories' | 'orders' | 'reviews' | 'customers' | 'marketing' | 'reports' | 'audit_logs' | 'settings' | 'employees'>(initialTab);
+  const [activeNav, setActiveNav] = useState<'dashboard' | 'catalog' | 'categories' | 'orders' | 'reviews' | 'customers' | 'marketing' | 'reports' | 'audit_logs' | 'settings' | 'employees' | 'backup'>(initialTab);
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
   const [isCheckingAuthorization, setIsCheckingAuthorization] = useState<boolean>(true);
   const [authError, setAuthError] = useState<string>('');
@@ -103,6 +104,9 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   const [adminEmail, setAdminEmail] = useState<string>('');
   const [adminPassword, setAdminPassword] = useState<string>('');
   const [isAdminAuthLoading, setIsAdminAuthLoading] = useState<boolean>(false);
+  const [isCreatingBackup, setIsCreatingBackup] = useState(false);
+  const [backupMessage, setBackupMessage] = useState('');
+  const [backupError, setBackupError] = useState('');
 
   // Synced Live State from MySQL Mock DB
   const [products, setProducts] = useState<Product[]>(db.getProducts());
@@ -238,6 +242,25 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({
   }, [isLoggedIn, isRootAdmin, adminPermissions, activeNav]);
 
   const activeLogo = db.getActiveVersion();
+
+  const handleDownloadBackup = async () => {
+    const session = getAuthSession();
+    if (!session || !isRootAdmin) {
+      setBackupError('Only a Super Admin can download a database backup.');
+      return;
+    }
+    setIsCreatingBackup(true);
+    setBackupMessage('');
+    setBackupError('');
+    try {
+      await downloadAdminBackup(session);
+      setBackupMessage('Backup downloaded successfully. Store and customer data is included; passwords and sessions are excluded.');
+    } catch (error) {
+      setBackupError(error instanceof Error ? error.message : 'Unable to download database backup.');
+    } finally {
+      setIsCreatingBackup(false);
+    }
+  };
   const lowStockProducts = db.getLowStockAlerts();
 
   // ==========================================
@@ -675,22 +698,22 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
   }
 
   return (
-    <div className="min-h-screen bg-[#F7F5EF] flex font-sans">
-      {/* Sidebar matching visual design shell */}
-      <aside className="w-64 bg-[#0B3D3F] text-[#CFE3E0] p-5 shrink-0 flex flex-col justify-between hidden md:flex border-r border-[#0F5257]">
-        <div className="space-y-6">
+    <div className="min-h-screen bg-[#F3F7F6] flex font-sans text-[#142426]">
+      <aside className="sticky top-0 hidden h-screen w-[250px] shrink-0 flex-col justify-between overflow-y-auto border-r border-white/10 bg-[#092F33] p-4 text-[#CFE3E0] md:flex">
+        <div className="space-y-7">
           {/* Brand Wordmark in Sidebar using Refreshed Logo (Dark mode) */}
-          <div className="pb-4 border-b border-[#0F5257]/60">
+          <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-4">
             <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-10 max-w-[180px] object-contain" />
-            <div className="flex items-center gap-1.5 mt-2 text-[10px] text-[#A4BFBC]">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-              <span>Active Brand Version:</span>
-              <strong className="text-white font-mono">{activeLogo.versionTag}</strong>
+            <div className="mt-3 flex items-center gap-2 text-[10px] text-[#A4BFBC]">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.55)]"></span>
+              <span>Store is live</span>
+              <span className="ml-auto font-mono text-white/70">{activeLogo.versionTag}</span>
             </div>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="space-y-1">
+          <div>
+            <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[#7FA5A2]">Workspace</p>
+            <nav className="space-y-1">
             {[
               { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
               { id: 'catalog', label: 'Dynamic Catalog', icon: Package, count: products.length },
@@ -702,8 +725,9 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
               { id: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
               { id: 'audit_logs', label: 'Audit Logs & RBAC', icon: ShieldCheck },
               { id: 'settings', label: 'Settings', icon: Settings },
+              { id: 'backup', label: 'Database Backup', icon: Database },
               { id: 'employees', label: 'Employee Access', icon: Users }
-            ].filter(item => item.id === 'employees' ? isRootAdmin : isRootAdmin || adminPermissions.includes(item.id) || (item.id === 'categories' && adminPermissions.includes('catalog'))).map(item => {
+            ].filter(item => item.id === 'employees' || item.id === 'backup' ? isRootAdmin : isRootAdmin || adminPermissions.includes(item.id) || (item.id === 'categories' && adminPermissions.includes('catalog'))).map(item => {
               const Icon = item.icon;
               const isActive = activeNav === item.id;
 
@@ -711,14 +735,14 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
                 <button
                   key={item.id}
                   onClick={() => setActiveNav(item.id as any)}
-                  className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-xs font-medium transition-all text-left cursor-pointer ${
+                  className={`group w-full flex items-center justify-between rounded-lg px-3 py-2.5 text-xs font-medium transition-all text-left cursor-pointer ${
                     isActive
-                      ? 'bg-white/10 text-white font-semibold border-l-3 border-[#48B065] pl-2.5'
-                      : 'text-[#AECAC5] hover:bg-white/5 hover:text-white'
+                      ? 'bg-[#D9EFEB] text-[#073F45] font-semibold shadow-sm'
+                      : 'text-[#AECAC5] hover:bg-white/[0.07] hover:text-white'
                   }`}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <Icon className="w-4 h-4" />
+                  <div className="flex items-center gap-3">
+                    <Icon className={`h-4 w-4 ${isActive ? 'text-[#0B6268]' : 'text-[#8BAEAA] group-hover:text-white'}`} />
                     <span>{item.label}</span>
                   </div>
                   {item.count !== undefined && (
@@ -730,6 +754,7 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
               );
             })}
           </nav>
+          </div>
         </div>
 
         {/* Sidebar Footer */}
@@ -768,27 +793,26 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Topbar */}
-        <header className="bg-white border-b border-[#E4E1D6] px-6 py-3 flex items-center justify-between sticky top-0 z-30">
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[#DCE7E5] bg-white/95 px-5 py-3.5 backdrop-blur-md sm:px-8">
           <div className="flex items-center gap-3">
-            <h2 className="font-serif text-lg font-bold text-[#20241F] capitalize">
-              {activeNav.replace('_', ' ')}
-            </h2>
-            <span className="hidden sm:inline-flex text-[11px] font-semibold text-[#0F5257] bg-[#EAF1F0] px-2.5 py-0.5 rounded-full border border-[#0F5257]/20">
-              Secure admin console
-            </span>
+            <div>
+              <p className="hidden text-[10px] font-semibold uppercase tracking-[0.16em] text-[#81918F] sm:block">TRS HUB / ADMIN</p>
+              <h2 className="font-serif text-lg font-bold capitalize leading-tight text-[#142426]">
+                {activeNav.replace(/_/g, ' ')}
+              </h2>
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Server-authorized employee role */}
-            <div className="flex items-center gap-1.5 bg-[#F7F5EF] px-2.5 py-1 rounded-lg border border-[#E4E1D6]">
+            <div className="hidden items-center gap-1.5 rounded-full border border-[#DCE7E5] bg-[#F3F7F6] px-3 py-1.5 sm:flex">
               <ShieldCheck className="w-3.5 h-3.5 text-[#0F5257]" />
-              <span className="text-xs font-semibold text-[#0F5257]">{adminRole}</span>
+              <span className="text-[11px] font-semibold text-[#31595A]">{adminRole}</span>
             </div>
 
             {/* Notification logs drawer button (REQ-ORD-004) */}
             <button
               onClick={() => setShowNotificationsModal(true)}
-              className="p-1.5 text-[#666B62] hover:text-[#0F5257] hover:bg-[#F7F5EF] rounded-lg transition-colors cursor-pointer relative"
+              className="relative rounded-lg p-2 text-[#647775] transition-colors hover:bg-[#F3F7F6] hover:text-[#0F5257] cursor-pointer"
               title="Automated Email & SMS Notifications Log"
             >
               <Mail className="w-4 h-4" />
@@ -797,52 +821,72 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
 
             <button
               onClick={onBackToStorefront}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#0F5257] bg-[#EAF1F0] hover:bg-[#d9e7e5] rounded-lg transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 rounded-lg border border-[#CFE3E0] bg-[#EAF4F2] px-3 py-2 text-xs font-semibold text-[#0F5257] transition-colors hover:bg-[#DCEDE9] cursor-pointer"
             >
               <ExternalLink className="w-3.5 h-3.5" />
-              <span>🛍️ Storefront</span>
+              <span>Storefront</span>
             </button>
           </div>
         </header>
 
         {/* View Routing */}
-        <main className="flex-1 p-6 md:p-8 max-w-7xl w-full mx-auto space-y-6">
+        <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-7 p-4 sm:p-6 lg:p-8">
           {/* TAB: DASHBOARD */}
           {activeNav === 'dashboard' && (
-            <div className="space-y-6">
-              {/* Stat Cards matching visual design mockup */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-white p-5 rounded-xl border border-[#E4E1D6] shadow-xs">
-                  <span className="text-xs text-[#666B62] block mb-1">Revenue (30d)</span>
-                  <div className="font-serif text-2xl font-bold text-[#20241F]">
+            <div className="space-y-7">
+              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.15em] text-[#0B6268]">Overview</p>
+                  <h1 className="mt-1 font-serif text-2xl font-bold tracking-tight text-[#142426] sm:text-3xl">Good to see you, {adminRole}.</h1>
+                  <p className="mt-1 text-sm text-[#647775]">Here’s what’s happening across your store today.</p>
+                </div>
+                <div className="text-xs font-medium text-[#71827F]">{new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(new Date())}</div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-[#DCE7E5] bg-white p-5 shadow-[0_2px_12px_rgba(20,36,38,0.03)] transition-shadow hover:shadow-[0_8px_24px_rgba(20,36,38,0.07)]">
+                  <div className="mb-4 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-[#647775]">Revenue (30d)</span>
+                    <span className="rounded-xl bg-[#EAF4F2] p-2 text-[#0B6268]"><BarChart3 className="h-4 w-4" /></span>
+                  </div>
+                  <div className="font-serif text-2xl font-bold tracking-tight text-[#142426]">
                     ${orders.reduce((sum, o) => sum + (o.orderStatus !== 'Cancelled' ? o.total : 0), 48230).toFixed(2)}
                   </div>
-                  <span className="text-xs text-emerald-700 font-medium">↑ 14.8% vs last month</span>
+                  <span className="mt-2 block text-xs font-medium text-emerald-700">↑ 14.8% vs last month</span>
                 </div>
 
-                <div className="bg-white p-5 rounded-xl border border-[#E4E1D6] shadow-xs">
-                  <span className="text-xs text-[#666B62] block mb-1">Total Orders</span>
-                  <div className="font-serif text-2xl font-bold text-[#20241F]">{1284 + orders.length}</div>
-                  <span className="text-xs text-emerald-700 font-medium">↑ 8.2% vs last month</span>
+                <div className="rounded-2xl border border-[#DCE7E5] bg-white p-5 shadow-[0_2px_12px_rgba(20,36,38,0.03)] transition-shadow hover:shadow-[0_8px_24px_rgba(20,36,38,0.07)]">
+                  <div className="mb-4 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-[#647775]">Total Orders</span>
+                    <span className="rounded-xl bg-[#EFF2FC] p-2 text-[#5367A7]"><ShoppingBag className="h-4 w-4" /></span>
+                  </div>
+                  <div className="font-serif text-2xl font-bold tracking-tight text-[#142426]">{1284 + orders.length}</div>
+                  <span className="mt-2 block text-xs font-medium text-emerald-700">↑ 8.2% vs last month</span>
                 </div>
 
-                <div className="bg-white p-5 rounded-xl border border-[#E4E1D6] shadow-xs">
-                  <span className="text-xs text-[#666B62] block mb-1">Catalog SKUs</span>
-                  <div className="font-serif text-2xl font-bold text-[#20241F]">{products.length} Products</div>
-                  <span className="text-xs text-[#0F5257] font-medium">{categories.length} Categories Active</span>
+                <div className="rounded-2xl border border-[#DCE7E5] bg-white p-5 shadow-[0_2px_12px_rgba(20,36,38,0.03)] transition-shadow hover:shadow-[0_8px_24px_rgba(20,36,38,0.07)]">
+                  <div className="mb-4 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-[#647775]">Catalog SKUs</span>
+                    <span className="rounded-xl bg-[#F4F0E7] p-2 text-[#967129]"><Package className="h-4 w-4" /></span>
+                  </div>
+                  <div className="font-serif text-2xl font-bold tracking-tight text-[#142426]">{products.length} Products</div>
+                  <span className="mt-2 block text-xs font-medium text-[#0F5257]">{categories.length} Categories Active</span>
                 </div>
 
-                <div className="bg-white p-5 rounded-xl border border-[#E4E1D6] shadow-xs">
-                  <span className="text-xs text-[#666B62] block mb-1">Low-Stock Warnings</span>
-                  <div className="font-serif text-2xl font-bold text-amber-700">{lowStockProducts.length} Items</div>
-                  <span className="text-xs text-amber-800 font-medium">Threshold: &le; 10 units</span>
+                <div className="rounded-2xl border border-[#DCE7E5] bg-white p-5 shadow-[0_2px_12px_rgba(20,36,38,0.03)] transition-shadow hover:shadow-[0_8px_24px_rgba(20,36,38,0.07)]">
+                  <div className="mb-4 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-[#647775]">Low-Stock Warnings</span>
+                    <span className="rounded-xl bg-[#FFF4E2] p-2 text-amber-700"><AlertTriangle className="h-4 w-4" /></span>
+                  </div>
+                  <div className="font-serif text-2xl font-bold tracking-tight text-amber-700">{lowStockProducts.length} Items</div>
+                  <span className="mt-2 block text-xs font-medium text-amber-800">Threshold: &le; 10 units</span>
                 </div>
               </div>
 
               {/* Grid: Sales Chart & Recent Orders */}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* Sales Chart (7 cols) */}
-                <div className="lg:col-span-7 bg-white p-6 rounded-xl border border-[#E4E1D6] shadow-xs space-y-4">
+                <div className="lg:col-span-7 space-y-4 rounded-2xl border border-[#DCE7E5] bg-white p-6 shadow-[0_2px_12px_rgba(20,36,38,0.03)]">
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="font-serif text-base font-bold text-[#20241F]">Revenue Pipeline &amp; Fulfillment</h3>
@@ -867,7 +911,7 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
                 </div>
 
                 {/* Recent Orders (5 cols) */}
-                <div className="lg:col-span-5 bg-white p-6 rounded-xl border border-[#E4E1D6] shadow-xs space-y-4">
+                <div className="lg:col-span-5 space-y-4 rounded-2xl border border-[#DCE7E5] bg-white p-6 shadow-[0_2px_12px_rgba(20,36,38,0.03)]">
                   <div className="flex items-center justify-between">
                     <h3 className="font-serif text-base font-bold text-[#20241F]">Recent Orders</h3>
                     <button onClick={() => setActiveNav('orders')} className="text-xs text-[#0F5257] hover:underline cursor-pointer">
@@ -2275,6 +2319,32 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
                 </div>
               </div>
             </div>
+          )}
+
+          {activeNav === 'backup' && isRootAdmin && (
+            <section className="max-w-3xl space-y-5 rounded-xl border border-[#E4E1D6] bg-white p-6 shadow-xs">
+              <div>
+                <h3 className="font-serif text-lg font-semibold text-[#20241F]">Database Backup</h3>
+                <p className="mt-2 text-sm leading-relaxed text-[#666B62]">
+                  Download a JSON backup of your store, orders, customer profiles, and account details.
+                  Password hashes, active sessions, and payment provider IDs are never included.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => void handleDownloadBackup()}
+                  disabled={isCreatingBackup}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#0F5257] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#0B3D3F] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Download className="h-4 w-4" />
+                  {isCreatingBackup ? 'Preparing backup...' : 'Download backup'}
+                </button>
+                <span className="text-xs text-[#9A5D17]">Backup contains sensitive customer information. Store it securely.</span>
+              </div>
+              {backupMessage && <p role="status" className="text-sm text-emerald-700">{backupMessage}</p>}
+              {backupError && <p role="alert" className="text-sm text-red-700">{backupError}</p>}
+            </section>
           )}
         </main>
       </div>

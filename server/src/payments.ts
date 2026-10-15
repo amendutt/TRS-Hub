@@ -5,7 +5,7 @@ import Stripe from 'stripe';
 import { z } from 'zod';
 import { getDatabase } from './database.js';
 import { requireSession } from './auth.js';
-import type { Order, OrderItem, Product } from '../src/types/logo.js';
+import type { Order, OrderItem, Product } from '../../src/types/logo.js';
 
 const router = Router();
 const checkoutSchema = z.object({

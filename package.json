@@ -4,9 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently --names API,WEB \"tsx watch server/index.ts\" \"vite --port=3000 --host=0.0.0.0\"",
+    "dev": "concurrently --names API,WEB \"tsx watch server/src/index.ts\" \"vite --port=3000 --host=0.0.0.0\"",
     "build": "vite build",
-    "start": "tsx server/index.ts",
+    "start": "tsx server/src/index.ts",
     "seed:demo-admin": "tsx scripts/seedDemoAdmin.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",

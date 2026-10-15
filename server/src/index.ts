@@ -15,7 +15,7 @@ import { getPersistentOrders, paymentRouter, stripeWebhook, syncPersistentOrderS
 const app = express();
 const port = Number(process.env.PORT ?? 3002);
 let localAdminState: Record<string, unknown> | null = null;
-const rootPath = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const rootPath = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const authLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: 'draft-7', legacyHeaders: false });
 const stateSchema = z.record(z.string(), z.unknown());
 const ADMIN_PERMISSIONS = ['dashboard', 'catalog', 'orders', 'customers', 'reviews', 'marketing', 'reports', 'logo_studio', 'settings', 'audit_logs', 'inventory'] as const;
@@ -369,6 +369,67 @@ app.get('/api/admin/state', async (request, response) => {
   } catch (error) {
     const status = error instanceof Error && error.message.includes('Admin access') ? 403 : 401;
     response.status(status).json({ error: error instanceof Error ? error.message : 'Admin authorization failed.' });
+  }
+});
+
+app.get('/api/admin/backup', async (request, response) => {
+  try {
+    await requireRootAdmin(request.header('authorization'));
+
+    const exportedAt = new Date().toISOString();
+    let storeState = localAdminState;
+    let orders: RowDataPacket[] = [];
+    let accounts: RowDataPacket[] = [];
+    let customerProfiles: RowDataPacket[] = [];
+
+    if (!localDemoMode) {
+      const database = getDatabase();
+      const [stateRows] = await database.execute<Array<RowDataPacket & { payload: unknown }>>(
+        'SELECT payload FROM app_state WHERE state_key = ?', ['store']
+      );
+      const payload = stateRows[0]?.payload;
+      storeState = typeof payload === 'string' ? JSON.parse(payload) : payload as Record<string, unknown> | null ?? null;
+
+      [orders] = await database.execute<RowDataPacket[]>(
+        `SELECT id, order_number, account_id, customer_email, currency, subtotal, shipping, tax,
+                discount, total, refund_amount, refund_reason, coupon_code, shipping_method,
+                payment_method, payment_provider, stock_reserved, payment_status, order_status,
+                items, shipping_address, created_at
+         FROM store_orders ORDER BY created_at DESC`
+      );
+      [accounts] = await database.execute<RowDataPacket[]>(
+        `SELECT id, email, display_name, phone_number, role, permissions, active, created_at, updated_at
+         FROM account_users ORDER BY created_at DESC`
+      );
+      [customerProfiles] = await database.execute<RowDataPacket[]>(
+        `SELECT account_id, saved_addresses, wishlist, created_at, updated_at
+         FROM customer_account_profiles`
+      );
+    }
+
+    const backup = {
+      format: 'trs-hub-backup',
+      version: 1,
+      exportedAt,
+      includesSensitiveCustomerData: true,
+      excludes: ['password_hashes', 'account_sessions', 'payment_provider_ids'],
+      data: { storeState, orders, accounts, customerProfiles }
+    };
+    const filename = `trs-hub-backup-${exportedAt.replace(/[:.]/g, '-')}.json`;
+    response.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    response.json(backup);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (message.includes('Super Admin') || message.includes('Admin access')) {
+      response.status(403).json({ error: message });
+      return;
+    }
+    if (message.includes('session') || message.includes('Bearer')) {
+      response.status(401).json({ error: message });
+      return;
+    }
+    console.error('Admin backup export failed:', error);
+    response.status(503).json({ error: 'Unable to create database backup. Try again later.' });
   }
 });
 

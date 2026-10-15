@@ -38,6 +38,16 @@ interface StorefrontProps {
 export const Storefront: React.FC<StorefrontProps> = ({
   onOpenAdminPortal
 }) => {
+  const categoryShortName = (categoryId: string, fallback: string) => ({
+    cat_enterprise_it: 'Laptops',
+    cat_networking: 'Networking',
+    cat_displays: 'Displays',
+    cat_home: 'Workspace',
+    cat_kitchen: 'Kitchen',
+    cat_electronics: 'Electronics',
+    cat_apparel: 'Workwear'
+  }[categoryId] || fallback);
+
   // Screen flow matching visual design text file
   const [currentView, setCurrentView] = useState<'home' | 'product_detail' | 'checkout' | 'order_success'>('home');
   const [selectedProduct, setSelectedProduct] = useState<Product>(db.getProducts()[0]);
@@ -502,13 +512,13 @@ export const Storefront: React.FC<StorefrontProps> = ({
               className="text-white hover:text-[#D9A441] transition-colors cursor-pointer flex items-center gap-1"
             >
               <Truck className="w-3.5 h-3.5 text-[#D9A441]" />
-              <span className="hidden sm:inline">Live</span> Order Tracking
+              <span className="hidden sm:inline">Track order</span>
             </button>
             <button
               onClick={onOpenAdminPortal}
               className="text-white hover:text-[#D9A441] transition-colors cursor-pointer"
             >
-              Admin Back-Office
+              Admin
             </button>
           </div>
         </div>
@@ -526,20 +536,20 @@ export const Storefront: React.FC<StorefrontProps> = ({
           </button>
 
           {/* Zone 2: Dynamic category navigation links */}
-          <nav className="hidden md:flex items-center gap-5 text-sm font-medium text-[#666B62]">
+          <nav aria-label="Shop categories" className="hidden xl:flex min-w-0 flex-1 items-center justify-center gap-3 overflow-x-auto whitespace-nowrap text-xs font-medium text-[#666B62]">
             <button
               onClick={() => { setActiveCategoryFilter('all'); setSelectedSubcategory(null); setSelectedAttrFilters({}); setCurrentView('home'); }}
               className={`hover:text-[#20241F] transition-colors cursor-pointer ${activeCategoryFilter === 'all' && currentView === 'home' ? 'text-[#0F5257] font-semibold' : ''}`}
             >
-              All Goods
+              Shop all
             </button>
-            {categories.slice(0, 5).map(cat => (
+            {categories.map(cat => (
               <button
                 key={cat.id}
                 onClick={() => { setActiveCategoryFilter(cat.id); setSelectedSubcategory(null); setSelectedAttrFilters({}); setCurrentView('home'); }}
                 className={`hover:text-[#20241F] transition-colors cursor-pointer ${activeCategoryFilter === cat.id && currentView === 'home' ? 'text-[#0F5257] font-semibold' : ''}`}
               >
-                {cat.name}
+                {categoryShortName(cat.id, cat.name)}
               </button>
             ))}
           </nav>
@@ -617,22 +627,16 @@ export const Storefront: React.FC<StorefrontProps> = ({
                 </p>
                 <div className="pt-2 flex items-center gap-4">
                   <button
-                    onClick={() => {
-                      setSelectedProduct(products[0]);
-                      setCurrentView('product_detail');
-                    }}
+                    onClick={() => { setActiveCategoryFilter('cat_enterprise_it'); setSelectedSubcategory(null); setSelectedAttrFilters({}); }}
                     className="px-5 py-2.5 bg-[#E1A84B] text-[#2E2515] rounded-lg text-sm font-semibold hover:bg-[#d39836] transition-all cursor-pointer shadow-sm"
                   >
-                    Browse refreshed tech
+                    Shop laptops
                   </button>
                   <button
-                    onClick={() => {
-                      setSelectedProduct(products[1]);
-                      setCurrentView('product_detail');
-                    }}
+                    onClick={() => { setActiveCategoryFilter('all'); setSelectedSubcategory(null); setSelectedAttrFilters({}); }}
                     className="px-4 py-2.5 text-sm font-semibold text-[#20241F] hover:text-[#0F5257] transition-colors"
                   >
-                    Explore business essentials →
+                    Browse all products →
                   </button>
                 </div>
               </div>
@@ -673,7 +677,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                         : 'bg-white text-[#666B62] border border-[#E4E1D6] hover:border-[#0F5257]'
                     }`}
                   >
-                    All Goods ({products.length})
+                    Shop all ({products.length})
                   </button>
                   {categories.map(cat => (
                     <button
@@ -685,7 +689,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                           : 'bg-white text-[#666B62] border border-[#E4E1D6] hover:border-[#0F5257]'
                       }`}
                     >
-                      {cat.name}
+                      {categoryShortName(cat.id, cat.name)}
                     </button>
                   ))}
                 </div>
@@ -783,7 +787,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
             <div>
               <div className="flex items-baseline justify-between mb-6">
                 <h2 className="font-serif text-2xl font-bold text-[#20241F]">
-                  Curated Catalog
+                  Professional equipment
                 </h2>
                 <span className="text-xs text-[#666B62]">
                   Showing {filteredProducts.length} items
@@ -861,7 +865,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
                           <div className="p-4 space-y-1">
                             <div className="flex items-center justify-between">
                               <span className="text-[11px] text-[#666B62] uppercase tracking-wider block font-semibold truncate max-w-[150px]">
-                                {product.categoryName}
+                                {categoryShortName(product.categoryId, product.categoryName)}
                               </span>
                               <span className="text-[11px] text-amber-600 font-semibold flex items-center gap-0.5">
                                 ★ {product.rating}
@@ -1702,7 +1706,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
             <ul className="text-xs text-[#9AA39B] space-y-1.5">
               <li><button onClick={() => setCurrentView('home')} className="hover:text-white cursor-pointer">Latest inventory</button></li>
               <li><button onClick={() => setCurrentView('checkout')} className="hover:text-white cursor-pointer">Checkout support</button></li>
-              <li><button onClick={onOpenAdminPortal} className="hover:text-white cursor-pointer">Back-Office Admin Portal</button></li>
+              <li><button onClick={onOpenAdminPortal} className="hover:text-white cursor-pointer">Admin</button></li>
             </ul>
           </div>
 

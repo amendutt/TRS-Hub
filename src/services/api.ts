@@ -93,6 +93,30 @@ export async function saveAdminState(user: AuthSession, state: MySQLDatabaseSnap
   });
 }
 
+export async function downloadAdminBackup(user: AuthSession): Promise<void> {
+  const response = await fetch('/api/admin/backup', {
+    headers: { Authorization: `Bearer ${user.token}` }
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(
+      typeof body.error === 'string'
+        ? body.error
+        : `Unable to download backup (${response.status}).`
+    );
+  }
+
+  const backup = await response.blob();
+  const filename = response.headers.get('Content-Disposition')
+    ?.match(/filename="([^"]+)"/)?.[1] ?? 'trs-hub-backup.json';
+  const downloadUrl = URL.createObjectURL(backup);
+  const link = document.createElement('a');
+  link.href = downloadUrl;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+}
+
 export async function loadAccountProfile(user: Pick<AuthSession, 'token'>): Promise<AccountProfile> {
   return authorizedRequest<AccountProfile>(user, '/api/auth/me');
 }
