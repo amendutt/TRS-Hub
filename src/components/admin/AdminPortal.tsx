@@ -16,7 +16,7 @@ import {
   StaticPage,
   HomepageBanner
 } from '../../types/logo';
-import logoImage from '../../assets/images/logo.png.png';
+import { BrandLockup } from '../logo/BrandLockup';
 import {
   LayoutDashboard,
   ShoppingBag,
@@ -643,7 +643,7 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
       <div className="min-h-screen bg-[#F7F5EF] flex items-center justify-center p-4">
         <div className="max-w-4xl w-full bg-white rounded-2xl shadow-xl border border-[#E4E1D6] overflow-hidden grid grid-cols-1 md:grid-cols-2">
           <div className="bg-gradient-to-br from-[#0B3D3F] to-[#0F5257] text-white p-10 flex flex-col justify-between">
-            <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-14 max-w-[260px] object-contain" />
+            <BrandLockup config={activeLogo.config} themeMode="dark" size="lg" />
             <div className="space-y-3">
               <h2 className="font-serif text-2xl font-bold">{activeLogo.config.brandName} Back-Office</h2>
               <p className="text-xs text-[#B0C6C3] leading-relaxed">
@@ -703,7 +703,7 @@ prd_bulk_02,HP EliteBook 840 G8,TRS-NB-0055,cat_enterprise_it,Enterprise IT & La
         <div className="space-y-7">
           {/* Brand Wordmark in Sidebar using Refreshed Logo (Dark mode) */}
           <div className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-4">
-            <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-10 max-w-[180px] object-contain" />
+            <BrandLockup config={activeLogo.config} themeMode="dark" size="sm" showTagline={false} />
             <div className="mt-3 flex items-center gap-2 text-[10px] text-[#A4BFBC]">
               <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.55)]"></span>
               <span>Store is live</span>

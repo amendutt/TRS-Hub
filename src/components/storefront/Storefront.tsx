@@ -4,7 +4,7 @@ import { db } from '../../services/mysqlMockDb';
 import { confirmStripePayment, createCheckout, loadAccountProfile, loadCustomerOrders, saveAccountProfile } from '../../services/api';
 import { registerWithEmail, signInWithEmail, signOut, observeAuthSession } from '../../services/auth';
 import { updateAuthSessionUser, type AuthSession } from '../../services/authSession';
-import logoImage from '../../assets/images/logo.png.png';
+import { BrandLockup } from '../logo/BrandLockup';
 import {
   Search,
   Heart,
@@ -532,7 +532,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
             onClick={() => setCurrentView('home')}
             className="flex items-center text-left focus:outline-none cursor-pointer"
           >
-            <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-10 max-w-[180px] object-contain" />
+            <BrandLockup config={activeLogo.config} size="sm" showTagline={false} />
           </button>
 
           {/* Zone 2: Dynamic category navigation links */}
@@ -1517,7 +1517,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
               <div className="bg-[#FAF8F3] p-6 rounded-xl border border-[#E4E1D6] text-left space-y-4 mt-6">
                 <div className="flex items-center justify-between border-b border-[#E4E1D6] pb-4">
                   <div>
-                    <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-8 max-w-[160px] object-contain" />
+                    <BrandLockup config={activeLogo.config} size="xs" showTagline={false} />
                     <span className="text-[11px] text-[#666B62] block mt-1">Official Packing Slip &amp; Tax Invoice</span>
                   </div>
                   <div className="text-right text-xs">
@@ -1682,7 +1682,7 @@ export const Storefront: React.FC<StorefrontProps> = ({
       <footer className="bg-[#1E2320] text-[#EDEFEA] border-t border-neutral-800 py-12 mt-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8">
           <div className="space-y-3">
-            <img src={logoImage} alt={activeLogo.config.brandName || 'HAVN'} className="h-10 max-w-[180px] object-contain" />
+            <BrandLockup config={activeLogo.config} themeMode="dark" size="sm" />
             <p className="text-xs text-[#9AA39B] max-w-xs leading-relaxed">
               {activeLogo.config.brandName} — Professional refurbished hardware, responsive service, and reliable procurement for modern teams.
             </p>
